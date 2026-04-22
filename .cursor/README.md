@@ -5,6 +5,6 @@ Only optimized to work with cursor currently.
 
 Steps
 1. Pull the repository
-2. Create .env from .env.example and populate variables 
-3. Start using the agents in cursor by usign @agent-name an the prompt.
+2. Create .env from .env.example and populate env variables 
+3. Start using the agents in cursor by usign @agent-name and the prompt.
 
