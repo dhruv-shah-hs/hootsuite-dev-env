@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://hootsuite.invalid/schemas/task-context-v1.json",
+  "title": "Resolved task context (pick-task + branch linkage)",
+  "description": "Written by `.cursor/tools/save-task-context`. Contains one resolved Jira task plus optional Git/Jira branch alignment from checkout-jira-branch --dry-run-json.",
+  "type": "object",
+  "required": ["resolved_at", "task"],
+  "additionalProperties": true,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional pointer to this schema file for editors."
+    },
+    "resolved_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When this file was last written (ISO 8601)."
+    },
+    "generated_by": {
+      "type": "string",
+      "description": "Tool that produced this document (e.g. save-task-context)."
+    },
+    "task": {
+      "type": "object",
+      "description": "Same shape as a single object from pick-task stdout (see task_to_json_shape).",
+      "required": ["id", "label"],
+      "additionalProperties": true,
+      "properties": {
+        "id": { "type": "string" },
+        "label": { "type": "string" },
+        "description": { "type": ["string", "null"] },
+        "browse_url": { "type": ["string", "null"] },
+        "jira_key": { "type": ["string", "null"] },
+        "command": { "type": ["string", "null"] }
+      }
+    },
+    "branch_alignment": {
+      "description": "Output of checkout-jira-branch --dry-run-json for the same Jira key, or null if skipped/failed.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "ok": { "type": "boolean" },
+            "error": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "repo_snapshot": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "git_branch": { "type": "string" },
+        "git_dirty_hint": {
+          "type": "boolean",
+          "description": "True if git status --porcelain had output at save time."
+        }
+      }
+    },
+    "repo_fit": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["unknown", "likely_fit", "likely_wrong_repo", "proceed_anyway"]
+        },
+        "notes": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

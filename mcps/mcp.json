@@ -1,0 +1,44 @@
+{
+  "mcpServers": {
+    "jira": {
+      "command": "npx",
+      "args": ["-y", "jira-mcp"],
+      "env": {
+        "JIRA_INSTANCE_URL": "${JIRA_INSTANCE_URL}",
+        "JIRA_USER_EMAIL": "${JIRA_USER_EMAIL}",
+        "JIRA_API_KEY": "${JIRA_API_KEY}"
+      }
+    },
+    "github": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-e",
+        "GITHUB_PERSONAL_ACCESS_TOKEN",
+        "ghcr.io/github/github-mcp-server"
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"
+      }
+    },
+    "githubEnterprise": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-e",
+        "GITHUB_PERSONAL_ACCESS_TOKEN",
+        "-e",
+        "GITHUB_HOST",
+        "ghcr.io/github/github-mcp-server"
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}",
+        "GITHUB_HOST": "${GITHUB_HOST}"
+      }
+    }
+  }
+}

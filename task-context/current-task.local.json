@@ -1,0 +1,41 @@
+{
+  "$schema": "./tasks.schema.json",
+  "resolved_at": "2026-04-21T18:48:49Z",
+  "generated_by": "save-task-context",
+  "task": {
+    "id": "ID-5737",
+    "label": "ID-5737: Update entitlement evaluation logic to distinguish trial users and apply trial entitlements",
+    "description": "In Review \u00b7 Task",
+    "command": "open https://hootsuite.atlassian.net/browse/ID-5737",
+    "browse_url": "https://hootsuite.atlassian.net/browse/ID-5737",
+    "jira_key": "ID-5737"
+  },
+  "branch_alignment": {
+    "ok": true,
+    "jira_key": "ID-5737",
+    "branch_prefix": "ID-5737_",
+    "matching_branches": [
+      "ID-5737_trial_entitlements"
+    ],
+    "current_branch": "ID-5737_trial_entitlements",
+    "branch_aligned_with_jira": true,
+    "planned_action": "would_checkout",
+    "planned_action_detail": "Single match; interactive run would git checkout ID-5737_trial_entitlements.",
+    "suffix_validation": {
+      "pattern": "[A-Za-z0-9._-]+",
+      "reject_substrings": [
+        "/",
+        ".."
+      ],
+      "reject_prefix": "."
+    }
+  },
+  "repo_snapshot": {
+    "git_branch": "ID-5737_trial_entitlements",
+    "git_dirty_hint": true
+  },
+  "repo_fit": {
+    "status": "unknown",
+    "notes": null
+  }
+}
