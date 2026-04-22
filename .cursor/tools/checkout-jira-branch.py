@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
 """
-Pick a Jira task (via pick-task), then check out a git branch named
+Read the selected task from `.cursor/task-context/current-task.local.json`
+(save-task-context / pick-task workflow), then check out a git branch named
   JIRA-TICKET-ID_<suffix>
 If no branch exists with that prefix, prompt for <suffix> and create the branch.
 
-Uses ./pick-task from the same directory for task selection (--id, --pick, or interactive).
-
 Examples:
   ./checkout-jira-branch
-  ./checkout-jira-branch --id ENG-1234
-  ./checkout-jira-branch --pick 2
-  ./checkout-jira-branch --id ENG-1234 --dry-run-json   # plan only (agents / no TTY)
+  ./checkout-jira-branch --dry-run-json   # plan only (agents / no TTY)
 
 --dry-run-json prints JSON describing Jira key, branch prefix, matching branches,
 current HEAD branch, and what checkout would do — without prompting or mutating git.
@@ -20,72 +17,40 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any
+
+_CURSOR_DIR = Path(__file__).resolve().parent.parent
+if str(_CURSOR_DIR) not in sys.path:
+    sys.path.insert(0, str(_CURSOR_DIR))
+
+from lib.git import (  # noqa: E402
+    branches_with_prefix,
+    checkout_branch,
+    current_branch_name,
+    run_git,
+)
 
 
-def script_dir() -> Path:
-    return Path(__file__).resolve().parent
+def task_context_path() -> Path:
+    return _CURSOR_DIR / "task-context" / "current-task.local.json"
 
 
-def run_pick_task(pick: Optional[int], issue_id: Optional[str]) -> dict:
-    pick_task = script_dir() / "pick-task"
-    if not pick_task.is_file():
-        sys.exit(f"Missing {pick_task}")
-    cmd = [str(pick_task)]
-    if pick is not None:
-        cmd.extend(["--pick", str(pick)])
-    elif issue_id:
-        cmd.extend(["--id", issue_id])
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    if proc.returncode != 0:
-        err = (proc.stderr or proc.stdout or "").strip()
-        sys.exit(err or "pick-task failed")
+def load_task_data() -> dict[str, Any]:
+    path = task_context_path()
+    if not path.is_file():
+        sys.exit(
+            f"Missing task context file: {path} (run save-task-context after pick-task)"
+        )
     try:
-        return json.loads(proc.stdout)
+        raw = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
-        sys.exit(f"Could not parse pick-task output as JSON: {e}")
-
-
-def run_git(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", *args],
-        capture_output=True,
-        text=True,
-        check=check,
-    )
-
-
-def git_lines(*args: str) -> list[str]:
-    p = run_git(*args, check=False)
-    if p.returncode != 0:
-        return []
-    return [ln.strip() for ln in p.stdout.splitlines() if ln.strip()]
-
-
-def branches_with_prefix(prefix: str) -> list[str]:
-    """Local and remote-tracking branch short names starting with prefix (deduped, sorted)."""
-    names: set[str] = set()
-    for ref in git_lines("for-each-ref", "--format=%(refname:short)", "refs/heads/"):
-        if ref.startswith(prefix):
-            names.add(ref)
-    for ref in git_lines("for-each-ref", "--format=%(refname:short)", "refs/remotes/"):
-        if ref.startswith("origin/"):
-            short = ref[len("origin/") :]
-            if short.startswith(prefix):
-                names.add(short)
-    return sorted(names)
-
-
-def checkout_branch(name: str) -> None:
-    p = run_git("checkout", name, check=False)
-    if p.returncode == 0:
-        print(f"Checked out {name}", file=sys.stderr)
-        return
-    err = (p.stderr or p.stdout or "").strip()
-    sys.exit(f"git checkout failed: {err}")
+        sys.exit(f"Invalid JSON in {path}: {e}")
+    task = raw.get("task")
+    if not isinstance(task, dict):
+        sys.exit(f"{path} has no 'task' object")
+    return task
 
 
 def prompt_suffix(prefix: str) -> str:
@@ -128,13 +93,6 @@ def pick_from_list(items: list[str], label: str) -> str:
         if 1 <= n <= len(items):
             return items[n - 1]
         print(f"Choose between 1 and {len(items)}.", file=sys.stderr)
-
-
-def current_branch_name() -> str:
-    p = run_git("branch", "--show-current", check=False)
-    if p.returncode != 0:
-        return ""
-    return (p.stdout or "").strip()
 
 
 def dry_run_payload(data: dict) -> dict:
@@ -187,20 +145,14 @@ def main() -> None:
     import argparse
 
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--id", metavar="KEY", help="Jira issue key (skip interactive list)")
-    p.add_argument("--pick", type=int, metavar="N", help="Select Nth task from pick-task list (1-based)")
     p.add_argument(
         "--dry-run-json",
         action="store_true",
         help="Print JSON plan only (no git checkout; no prompts). For agents / automation.",
     )
     args = p.parse_args()
-    if args.pick is not None and args.id:
-        sys.exit("Use only one of --pick or --id")
-    if args.dry_run_json and args.pick is None and not args.id:
-        sys.exit("With --dry-run-json, pass --id ISSUE-KEY or --pick N (non-interactive).")
 
-    data = run_pick_task(args.pick, args.id)
+    data = load_task_data()
     if args.dry_run_json:
         payload = dry_run_payload(data)
         print(json.dumps(payload, indent=2))

@@ -1,5 +1,5 @@
 ---
-Builds a skimmable context pack from the selected Cursor task (current-task.local.json / Jira via pick-task)
+Builds a skimmable context pack from the selected Cursor task (Jira via `pick-task`, persisted to `.cursor/task-context/current-task.local.json`)
 plus the current repository. Use when starting work from a task, scoping a change, or onboarding.
 name: task-context-builder
 model: claude-opus-4-7-thinking-high
@@ -31,7 +31,7 @@ Tasks are usually defined in Jira (schema: `.cursor/task-context/tasks.schema.js
 
 ### Interactive mode — human in Cursor (TTY)
 
-For the script’s built-in `>` prompts (`pick-task` and `checkout-jira-branch`), the user must run commands in **Terminal → New Terminal** (`` Cmd+` `` on macOS). Agent-run shells do not reliably provide stdin to `input()`; the user’s integrated terminal does.
+For the script’s built-in `>` prompts (`pick-task`, `checkout-jira-branch` suffix / branch list), the user must run commands in **Terminal → New Terminal** (`` Cmd+` `` on macOS). Agent-run shells do not reliably provide stdin to `input()`; the user’s integrated terminal does.
 
 1. **Working directory:** repository root (so `./.env` is loaded when present).
 2. **Auth:** `JIRA_INSTANCE_URL`, `JIRA_USER_EMAIL`, `JIRA_API_KEY` in the environment or `./.env`.
@@ -71,28 +71,43 @@ Do **not** rely on blocking stdin.
 | User pasted task JSON or gave `id` / Jira key | Use that; run `pick-task --id KEY` only to refresh Jira fields. |
 | Choose by issue key | `python3 .cursor/tools/pick-task --id ISSUE-KEY` |
 | Choose by row (same order as `--json`) | `python3 .cursor/tools/pick-task --pick N` |
+| Branch checkout after selection | Persist task (`pick-task … \| save-task-context --stdin`), then `python3 .cursor/tools/checkout-jira-branch` (reads `current-task.local.json`) |
 
 Extract at minimum: `id`, `label`, `description`. Also capture when present: `browse_url`, `jira_key`, `command`.
 
 If the task has a **preset command** (`command`), treat it as the primary validation command unless discovery or search shows a more specific one.
 
+### Persist the task (required before branch checkout)
+
+**`.cursor/tools/checkout-jira-branch`** does **not** call `pick-task`. It reads the resolved task from **`.cursor/task-context/current-task.local.json`** (field **`task`**, schema: `.cursor/task-context/tasks.schema.json` if present). That file is typically **gitignored**; each developer generates it locally.
+
+After you have task JSON from `pick-task` (stdout), persist it—for example:
+
+```bash
+python3 .cursor/tools/pick-task --id ISSUE-KEY | python3 .cursor/tools/save-task-context --stdin
+```
+
+Use the same pattern after interactive `pick-task` if your `save-task-context` wrapper accepts stdin or a file path. **Agents** can rely on **already materialized** `current-task.local.json` or instruct the user to run pick-task + save once.
+
 ## 2) Branch: identify, validate, checkout (Jira key → git)
 
-Helper script: `.cursor/tools/checkout-jira-branch`. It composes **`pick-task`** with git: branch names use **`ISSUE-KEY_`** as the prefix (e.g. `ID-5737_trial-entitlements`). It searches local and `origin/*` branches that **start with** that prefix.
+Helper: **`.cursor/tools/checkout-jira-branch`** (uses **`.cursor/lib/git`**). It loads **`task.jira_key`** / **`task.id`** from **`current-task.local.json`**, then matches git branches whose names **start with** **`ISSUE-KEY_`** (e.g. `ID-0007_entitlements`) on local and `origin/*`.
 
 ### Interactive mode — human (TTY)
 
 Run from repository root in the **integrated Terminal** (not the chat agent runner).
 
-- **Flow A — one command (nested pick):**  
-  `python3 .cursor/tools/checkout-jira-branch`  
-  Runs `pick-task` interactively, then branch logic. If **no** branch matches `ISSUE-KEY_`, the script **prompts for a descriptor** (suffix); the full branch is `ISSUE-KEY_<suffix>`.
+1. Ensure **`current-task.local.json`** exists and contains the intended `task` (see **Persist the task** above).
+2. Run:
 
-- **Flow B — task already chosen:**  
-  `python3 .cursor/tools/checkout-jira-branch --id ISSUE-KEY`  
-  or `--pick N` aligned with `pick-task`’s list. Same branch matching and suffix prompt as above.
+   ```bash
+   python3 .cursor/tools/checkout-jira-branch
+   ```
 
-- If **multiple** branches share the prefix, the script lists them and waits for a numeric choice at `>`.
+3. If **no** branch matches `ISSUE-KEY_`, the script **prompts for a descriptor** (suffix); full branch = `ISSUE-KEY_<suffix>`.
+4. If **multiple** branches share the prefix, the script lists them and waits for a numeric choice at `>`.
+
+To change the Jira issue for checkout, re-run **`pick-task`** (and persist with **`save-task-context`**), not flags on `checkout-jira-branch`.
 
 Verify you are on the intended repository and remote before creating branches.
 
@@ -100,13 +115,13 @@ Verify you are on the intended repository and remote before creating branches.
 
 Agents must not depend on `input()` inside `checkout-jira-branch`.
 
-1. Plan without mutating git or prompting:
+1. Ensure **`current-task.local.json`** is present (user saved task, or read **`task`** from it if the agent is only planning). Plan without mutating git or prompting:
 
    ```bash
-   python3 .cursor/tools/checkout-jira-branch --id ISSUE-KEY --dry-run-json
+   python3 .cursor/tools/checkout-jira-branch --dry-run-json
    ```
 
-   Inspect `planned_action`: `would_checkout`, `would_prompt_new_branch`, or `would_prompt_pick_branch`; use `matching_branches`, `branch_prefix`, and `suffix_validation`.
+   Requires a valid **`task`** with `jira_key` / `id`. Inspect `planned_action`: `would_checkout`, `would_prompt_new_branch`, or `would_prompt_pick_branch`; use `matching_branches`, `branch_prefix`, and `suffix_validation`.
 
 2. **If** `would_prompt_new_branch`: offer a **cancel path** before asking for the suffix—for example **AskQuestion** with at least **Continue** (proceed to suffix) and **Cancel** (skip branch creation/checkout). If the user **cancels**, do **not** run git or insist on a branch name; note the current branch and continue the workflow (context pack, discovery) without implying alignment. **If they continue**, use **AskQuestion** or a short text ask to collect the **suffix** only (branch = `branch_prefix` + suffix). Rules: alphanumeric and `._-`; no `/`, no `..`, no leading `.` (see JSON `suffix_validation`). Then either have the user run `git checkout -b <full-name>` locally, or run git only after explicit user approval and `git_write` scope.
 
