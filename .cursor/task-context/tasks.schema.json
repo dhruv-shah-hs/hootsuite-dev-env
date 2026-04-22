@@ -31,6 +31,10 @@
         "description": { "type": ["string", "null"] },
         "browse_url": { "type": ["string", "null"] },
         "jira_key": { "type": ["string", "null"] },
+        "is_deployed": {
+          "type": ["boolean", "null"],
+          "description": "Optional deployment hint (tooling-specific). Null/absent means unknown."
+        },
         "command": { "type": ["string", "null"] }
       }
     },

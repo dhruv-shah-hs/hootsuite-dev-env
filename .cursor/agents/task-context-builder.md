@@ -1,5 +1,5 @@
 ---
-Builds a skimmable context pack from the selected Cursor task (tasks.json / Jira via pick-task)
+Builds a skimmable context pack from the selected Cursor task (current-task.local.json / Jira via pick-task)
 plus the current repository. Use when starting work from a task, scoping a change, or onboarding.
 name: task-context-builder
 model: claude-opus-4-7-thinking-high
@@ -26,7 +26,7 @@ Tasks are usually defined in Jira (schema: `.cursor/task-context/tasks.schema.js
 
 | User intent | What to do |
 | --- | --- |
-| Pick / select / list Jira tasks | Run issue search (`pick-task` default JQL, or `--json` for the full list). |
+| show / pick / select / list Jira tasks | Run issue search (`pick-task` default JQL, or `--json` for the full list). |
 | Picked task / task details / issue `KEY` | Resolve one issue (`pick-task --id KEY`, or use pasted task JSON). |
 
 ### Interactive mode — human in Cursor (TTY)
