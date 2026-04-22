@@ -1,26 +1,26 @@
 {
   "$schema": "./tasks.schema.json",
-  "resolved_at": "2026-04-21T18:48:49Z",
+  "resolved_at": "2026-04-22T18:52:36.913095+00:00",
   "generated_by": "save-task-context",
   "task": {
-    "id": "ID-5737",
-    "label": "ID-5737: Update entitlement evaluation logic to distinguish trial users and apply trial entitlements",
-    "description": "In Review \u00b7 Task",
-    "command": "open https://hootsuite.atlassian.net/browse/ID-5737",
-    "browse_url": "https://hootsuite.atlassian.net/browse/ID-5737",
-    "jira_key": "ID-5737"
+    "id": "ID-5652",
+    "label": "ID-5652: Clean Up DL behind which new AI Opt Out is hidden",
+    "description": "To Do \u00b7 Task",
+    "command": "open https://hootsuite.atlassian.net/browse/ID-5652",
+    "browse_url": "https://hootsuite.atlassian.net/browse/ID-5652",
+    "jira_key": "ID-5652"
   },
   "branch_alignment": {
     "ok": true,
-    "jira_key": "ID-5737",
-    "branch_prefix": "ID-5737_",
+    "jira_key": "ID-5652",
+    "branch_prefix": "ID-5652_",
     "matching_branches": [
-      "ID-5737_trial_entitlements"
+      "ID-5652_remove_dl"
     ],
-    "current_branch": "ID-5737_trial_entitlements",
+    "current_branch": "ID-5652_remove_dl",
     "branch_aligned_with_jira": true,
     "planned_action": "would_checkout",
-    "planned_action_detail": "Single match; interactive run would git checkout ID-5737_trial_entitlements.",
+    "planned_action_detail": "Single match; interactive run would git checkout ID-5652_remove_dl.",
     "suffix_validation": {
       "pattern": "[A-Za-z0-9._-]+",
       "reject_substrings": [
@@ -31,7 +31,7 @@
     }
   },
   "repo_snapshot": {
-    "git_branch": "ID-5737_trial_entitlements",
+    "git_branch": "ID-5652_remove_dl",
     "git_dirty_hint": true
   },
   "repo_fit": {

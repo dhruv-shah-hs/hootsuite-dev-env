@@ -20,7 +20,10 @@ Examples:
   ./pick-task --json
   ./pick-task --jql "project = ENG ORDER BY created DESC"
   ./pick-task --id PROJ-123             # fetch that issue directly (GET /issue/{key})
-  python3 .cursor/tools/pick-task --id PROJ-123 | python3 .cursor/tools/save-task-context --stdin   # persist
+  python3 .cursor/tools/pick-task.py --id PROJ-123 | python3 .cursor/tools/save-task-context.py --stdin   # persist
+
+Also writes `.cursor/task-context/workspace-context.json` when a single task is resolved (not with --json
+list mode). Service repo is expected under `./.reference`. Use --no-workspace-context to skip.
 """
 
 from __future__ import annotations
@@ -35,6 +38,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+
+_CURSOR_DIR = Path(__file__).resolve().parent.parent
+if str(_CURSOR_DIR) not in sys.path:
+    sys.path.insert(0, str(_CURSOR_DIR))
+
+from lib.workspace_context import write_workspace_context  # noqa: E402
 
 
 def try_load_dotenv() -> None:
@@ -229,6 +238,11 @@ def main() -> None:
         action="store_true",
         help="After selection, print only the command string (if any)",
     )
+    p.add_argument(
+        "--no-workspace-context",
+        action="store_true",
+        help="Do not write .cursor/task-context/workspace-context.json",
+    )
     args = p.parse_args()
 
     if args.id:
@@ -247,6 +261,17 @@ def main() -> None:
         print(json.dumps({"tasks": out}, indent=2))
         return
 
+    def refresh_workspace_context() -> None:
+        if args.no_workspace_context:
+            return
+        try:
+            cwd = Path.cwd()
+            out = write_workspace_context(cwd)
+            rel = out.relative_to(cwd.resolve())
+            print(f"Wrote workspace context: {rel}", file=sys.stderr)
+        except (OSError, ValueError) as e:
+            print(f"Warning: could not write workspace-context.json: {e}", file=sys.stderr)
+
     if args.pick is not None:
         if args.pick < 1 or args.pick > len(tasks):
             sys.exit(f"--pick must be between 1 and {len(tasks)} (inclusive)")
@@ -257,6 +282,8 @@ def main() -> None:
             sys.exit(f"Unknown task id: {args.id}")
     else:
         chosen = pick_interactive(tasks)
+
+    refresh_workspace_context()
 
     cmd = chosen.get("command")
     if args.print_command:

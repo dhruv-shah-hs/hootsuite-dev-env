@@ -1,0 +1,242 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://hootsuite.invalid/schemas/workspace-context-v1.json",
+  "title": "Workspace context (.reference service repo + dev commands)",
+  "description": "Written by `.cursor/lib/workspace_context.py` (called from `pick-task.py`). Captures the resolved service repo under `.reference/`, its tech stack, toolchain pins, git state, and the Makefile commands the agent should prefer.",
+  "type": "object",
+  "required": ["generated_at", "reference_path", "tech_stack"],
+  "additionalProperties": true,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional pointer to this schema file for editors."
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When this file was last written (ISO 8601, UTC)."
+    },
+    "reference_path": {
+      "type": "string",
+      "description": "Path (from dev-env root) to the directory holding service repo(s). Defaults to `.reference`."
+    },
+    "service_root": {
+      "type": ["string", "null"],
+      "description": "Relative path (POSIX, from dev-env root) to the chosen service repo, or null if not detected."
+    },
+    "makefile": {
+      "type": ["string", "null"],
+      "description": "Relative path to the service Makefile, or null if not detected."
+    },
+    "tech_stack": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "languages": { "type": "array", "items": { "type": "string" } },
+        "build_tools": { "type": "array", "items": { "type": "string" } },
+        "manifests": { "type": "array", "items": { "type": "string" } },
+        "summary": { "type": "string" }
+      }
+    },
+    "toolchain": {
+      "type": "object",
+      "description": "Best-effort runtime/toolchain version pins. Strings as found in manifests, or null when unknown.",
+      "additionalProperties": true,
+      "properties": {
+        "sbt": { "type": ["string", "null"] },
+        "scala": { "type": ["string", "null"] },
+        "java": { "type": ["string", "null"] },
+        "node": { "type": ["string", "null"] },
+        "python": { "type": ["string", "null"] },
+        "go": { "type": ["string", "null"] },
+        "sources": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Files consulted (relative to service_root) so the agent can verify pins."
+        },
+        "summary": { "type": "string" }
+      }
+    },
+    "service_git": {
+      "type": "object",
+      "description": "Git state of the service repo under `.reference/<service>` (separate from the dev-env repo).",
+      "additionalProperties": true,
+      "properties": {
+        "is_git_repo": { "type": "boolean" },
+        "branch": { "type": ["string", "null"] },
+        "head_sha": { "type": ["string", "null"] },
+        "head_short_sha": { "type": ["string", "null"] },
+        "remote_url": { "type": ["string", "null"] },
+        "default_branch": { "type": ["string", "null"] },
+        "dirty": { "type": "boolean" },
+        "ahead": { "type": "integer", "minimum": 0 },
+        "behind": { "type": "integer", "minimum": 0 },
+        "tracking": { "type": ["string", "null"] }
+      }
+    },
+    "make_targets": {
+      "type": "array",
+      "description": "Parsed Makefile targets (skips recipes/directives). Descriptions come from `## ...` comments after the target name.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string" },
+          "description": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "primary_commands": {
+      "type": "object",
+      "description": "Stable role keys (`run`, `test`, `compile_and_test`, `vault_setup_local_dev`, `build_service`, `scalafmt`, `run_minikube`, `help`) → shell one-liners that cd into service_root and invoke `make <target>`. Only present when the corresponding Make target exists.",
+      "additionalProperties": { "type": "string" }
+    },
+    "endpoints": {
+      "type": "object",
+      "description": "Ports and local HTTP examples discovered from Dockerfile EXPOSE lines, README snippets, and application.conf.",
+      "additionalProperties": true,
+      "properties": {
+        "ports": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1, "maximum": 65535 }
+        },
+        "http_examples": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["port", "path", "example"],
+            "properties": {
+              "port": { "type": "integer" },
+              "path": { "type": "string" },
+              "example": { "type": "string" }
+            }
+          }
+        },
+        "debug": {
+          "type": "object",
+          "description": "Debug-related ports (e.g. `jdwp`).",
+          "additionalProperties": { "type": "integer" }
+        }
+      }
+    },
+    "tests": {
+      "type": "object",
+      "description": "Test entrypoints and likely source directories.",
+      "additionalProperties": true,
+      "properties": {
+        "runners": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "command", "scope"],
+            "properties": {
+              "name": { "type": "string" },
+              "command": { "type": "string" },
+              "scope": { "type": "string" }
+            }
+          }
+        },
+        "directories": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "config_surface": {
+      "type": "object",
+      "description": "Configuration layers, darklaunch, `.env` files, and Vault/setup commands the agent should be aware of.",
+      "additionalProperties": true,
+      "properties": {
+        "config_dirs": { "type": "array", "items": { "type": "string" } },
+        "config_files": { "type": "array", "items": { "type": "string" } },
+        "env_files": { "type": "array", "items": { "type": "string" } },
+        "setup_commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "command", "purpose"],
+            "properties": {
+              "name": { "type": "string" },
+              "command": { "type": "string" },
+              "purpose": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "docs_index": {
+      "type": "array",
+      "description": "Notable service-repo docs (README, ADRs, CODEOWNERS, Jenkinsfiles, Dockerfile, and files under docs/).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "role"],
+        "properties": {
+          "path": { "type": "string" },
+          "role": { "type": "string" },
+          "excerpt": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "task_repo_fit": {
+      "type": "object",
+      "description": "Heuristic signal that the current task (from current-task.local.json) actually belongs to this service.",
+      "additionalProperties": true,
+      "properties": {
+        "signal": {
+          "type": "string",
+          "enum": ["strong", "weak", "none", "unknown"]
+        },
+        "keywords": { "type": "array", "items": { "type": "string" } },
+        "matches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["keyword", "file_count", "top_files"],
+            "properties": {
+              "keyword": { "type": "string" },
+              "file_count": { "type": "integer", "minimum": 0 },
+              "top_files": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        "notes": { "type": ["string", "null"] }
+      }
+    },
+    "vscode_launch": {
+      "description": "Set when `.vscode/launch.json` was upserted with an attach configuration for the detected stack.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "path": { "type": "string", "description": "Relative path to the launch.json file." },
+            "configuration_name": { "type": "string" },
+            "service_name": { "type": "string" },
+            "debug_attach": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "kind": { "type": "string", "enum": ["jvm-jdwp", "node-inspector", "debugpy", "delve-remote"] },
+                "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+                "vscode_type": { "type": "string" },
+                "hint": { "type": "string" }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Diagnostic messages (missing .reference, missing Makefile targets, no attach template for stack, etc.)."
+    }
+  }
+}

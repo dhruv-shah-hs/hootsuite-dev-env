@@ -16,6 +16,10 @@ You turn a **selected task** and the **current repository** into one concise **c
 - Call out **assumptions** and **open questions** explicitly.
 - Name the **detected stack and entrypoints** briefly (e.g. “Node + pnpm”, “Go module”, “Gradle multi-project”) so the pack transfers across repos.
 
+**Repository scope:** In **`hootsuite-dev-env`**, the committed tree is Cursor agents, Python helpers, and MCP wiring—not a shipping service. A **minimal or stub Jira issue** (for example **ID-5750**) is enough to exercise `pick-task.py`, **`save-task-context.py`**, branch checkout, and this agent end-to-end while you extend the workflow.
+
+**Service code under `.reference/`:** When present, **`.reference/`** is the **application or service repository** the Jira task refers to (clone, worktree, or symlink). For **stack detection, tests, run commands, and “likely touch points,”** search and read **`.reference/`** first, then this repo’s `.cursor/` helpers. If `.reference/` is missing, state that in the context pack and ask whether to add it or work only in `hootsuite-dev-env`.
+
 ## 1) Resolve the task
 
 Tasks are usually defined in Jira (schema: `.cursor/task-context/tasks.schema.json` if present). The helper script is `.cursor/tools/pick-task`.
@@ -136,11 +140,20 @@ When the task is resolved and the working branch matches the Jira issue (or a ne
 If the user **cancelled** branch creation/checkout (`would_prompt_new_branch`), do **not** claim alignment; summarize the task and current branch without implying a Jira-named branch is checked out.
 
 ## 3) Build task context.
-Code discovery and steup for continous development loop end's on users instructions
-Build context with current-task.local and checked out codebase. 
-Identify stack
--Env,
--commands to start server, test code, run debug etc..
+Code discovery and setup for continuous development loop ends on user's instructions.
+Build context from `current-task.local.json` + the checked-out codebase + `.cursor/task-context/workspace-context.json` (auto-refreshed by `pick-task.py` and `save-task-context.py`).
+
+Prefer facts from `workspace-context.json` (schema: `.cursor/task-context/workspace-context.schema.json`) over guesses:
+
+- **`service_root` / `makefile` / `tech_stack` / `toolchain`** — which `.reference/` service is active, languages/build tools, and pinned runtime versions.
+- **`service_git`** — branch/SHA/remote of the service repo (separate from `hootsuite-dev-env`).
+- **`primary_commands`** — preferred role → shell one-liners (`run`, `test`, `compile_and_test`, `vault_setup_local_dev`, …).
+- **`endpoints.ports` / `endpoints.http_examples`** — service HTTP surface extracted from Dockerfile/README/`application.conf`. Use in the "how to hit it locally" section of the pack.
+- **`tests.runners` / `tests.directories`** — preferred test commands and where tests live.
+- **`config_surface`** — `config/<env>` layers, `darklaunch/*`, `.env*`, and Vault setup commands. Surface these when the task touches config, flags, or secrets.
+- **`docs_index`** — README, ADRs, CODEOWNERS, Jenkinsfiles, `docs/` entries; cite these in the pack instead of re-describing.
+- **`task_repo_fit`** — heuristic grep of task keywords against the service repo. If `signal` is `none`, warn that this may be the wrong service and ask the user to confirm before discovery.
+- **`vscode_launch`** — attach-to-process config already wired for the stack (JVM/JDWP, Node inspector, debugpy, Delve).
 Run commands to build and start the server 
 Users now can ask questions about the task and code in continous loop until they are satisfied with the change made. 
 
