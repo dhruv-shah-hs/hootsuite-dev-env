@@ -1,10 +1,10 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://hootsuite.invalid/schemas/workspace-context-v1.json",
-  "title": "Workspace context (.reference service repo + dev commands)",
-  "description": "Written by `.cursor/lib/workspace_context.py` (called from `pick-task.py`). Captures the resolved service repo under `.reference/`, its tech stack, toolchain pins, git state, and the Makefile commands the agent should prefer.",
+  "title": "Workspace context (sibling service-entitlement + dev commands)",
+  "description": "Written by `.cursor/lib/workspace_context.py` (called from `pick-task.py`). Captures the resolved service repo (`../service-entitlement` next to this dev-env), its tech stack, toolchain pins, git state, and the Makefile commands the agent should prefer.",
   "type": "object",
-  "required": ["generated_at", "reference_path", "tech_stack"],
+  "required": ["generated_at", "tech_stack"],
   "additionalProperties": true,
   "properties": {
     "$schema": {
@@ -15,10 +15,6 @@
       "type": "string",
       "format": "date-time",
       "description": "When this file was last written (ISO 8601, UTC)."
-    },
-    "reference_path": {
-      "type": "string",
-      "description": "Path (from dev-env root) to the directory holding service repo(s). Defaults to `.reference`."
     },
     "service_root": {
       "type": ["string", "null"],
@@ -59,7 +55,7 @@
     },
     "service_git": {
       "type": "object",
-      "description": "Git state of the service repo under `.reference/<service>` (separate from the dev-env repo).",
+      "description": "Git state of the service repo (separate clone from the dev-env repo).",
       "additionalProperties": true,
       "properties": {
         "is_git_repo": { "type": "boolean" },
@@ -236,7 +232,7 @@
     "notes": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Diagnostic messages (missing .reference, missing Makefile targets, no attach template for stack, etc.)."
+      "description": "Diagnostic messages (missing sibling service-entitlement, missing Makefile targets, no attach template for stack, etc.)."
     }
   }
 }
