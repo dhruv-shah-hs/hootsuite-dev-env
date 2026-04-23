@@ -1,135 +1,240 @@
 #!/usr/bin/env python3
 """
-Write `.cursor/task-context/current-task.local.json` from pick-task JSON.
+Persist the resolved task from pick-task plus optional Git/Jira branch alignment.
 
-Reads a single task object (same shape as `pick-task.py` stdout) or a wrapper
-`{"task": {...}}` from stdin or a file, validates `id` / `label`, then writes
-the schema-shaped document including optional branch dry-run and git snapshot.
+Uses the same task shape as pick-task stdout (single JSON object). Optionally runs
+`python3 .cursor/tools/checkout-jira-branch.py --dry-run-json` after writing the task
+so the dry-run reads the same task (requires CURSOR_SERVICE_REPO / service_repo_root
+when the git clone is not cwd).
+
+Default output: .cursor/task-context/current-task.local.json (override with --out).
+That path is gitignored — copy or commit a redacted snapshot elsewhere if needed.
 
 Examples:
-  python3 .cursor/tools/pick-task.py --id PROJ-123 | python3 .cursor/tools/save-task-context.py --stdin
-  python3 .cursor/tools/save-task-context.py --stdin < task.json
-  python3 .cursor/tools/save-task-context.py path/to/task.json
+  python3 .cursor/tools/pick-task --id ENG-123 | python3 .cursor/tools/save-task-context --stdin
+  python3 .cursor/tools/save-task-context --from-id ENG-123
+  python3 .cursor/tools/save-task-context --from-id ENG-123 --no-branch
 
-Run from the repository root so `./.env` is found by other tools when needed.
+If task.is_deployed is true (Jira Done), prompts on an interactive terminal before writing;
+set CURSOR_SKIP_DEPLOYED_CONFIRM=1 to proceed without prompting (CI/automation).
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
-_CURSOR_DIR = Path(__file__).resolve().parent.parent
-if str(_CURSOR_DIR) not in sys.path:
-    sys.path.insert(0, str(_CURSOR_DIR))
-
-from lib.task_context import (  # noqa: E402
-    dry_run_branch_alignment,
-    extract_task_object,
-    git_repo_snapshot,
-    task_context_path,
-)
-from lib.workspace_context import write_workspace_context  # noqa: E402
+_LIB = Path(__file__).resolve().parent.parent / "lib"
+if _LIB.is_dir() and str(_LIB) not in sys.path:
+    sys.path.insert(0, str(_LIB))
+from deployed_confirm import confirm_continue_if_deployed_complete  # noqa: E402
 
 
-def validate_task(task: dict[str, Any]) -> None:
-    tid = task.get("id")
-    label = task.get("label")
-    if not isinstance(tid, str) or not tid.strip():
-        sys.exit("task must have a non-empty string 'id' (Jira key or issue id)")
-    if not isinstance(label, str) or not label.strip():
-        sys.exit("task must have a non-empty string 'label'")
+def script_dir() -> Path:
+    return Path(__file__).resolve().parent
 
 
-def read_input_json(path: Path | None, use_stdin: bool) -> Any:
-    if use_stdin:
-        raw = sys.stdin.read()
-    elif path is not None:
-        raw = path.read_text(encoding="utf-8")
+def default_out_path() -> Path:
+    return (Path.cwd() / ".cursor/task-context/current-task.local.json").resolve()
+
+
+def pick_task_script() -> Path:
+    d = script_dir()
+    for name in ("pick-task.py", "pick-task"):
+        p = d / name
+        if p.is_file():
+            return p
+    sys.exit(f"No pick-task script found in {d}")
+
+
+def run_pick_task(pick: int | None, issue_id: str | None) -> dict:
+    pick_task = pick_task_script()
+    cmd = [sys.executable, str(pick_task)]
+    if pick is not None:
+        cmd.extend(["--pick", str(pick)])
+    elif issue_id:
+        cmd.extend(["--id", issue_id])
     else:
-        sys.exit("Provide --stdin or a path to a JSON file")
-    raw = raw.strip()
-    if not raw:
-        sys.exit("Input is empty")
+        sys.exit("Internal: pick-task requires --pick or --id")
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()
+        sys.exit(err or "pick-task failed")
     try:
-        return json.loads(raw)
+        return json.loads(proc.stdout)
     except json.JSONDecodeError as e:
-        sys.exit(f"Invalid JSON: {e}")
+        sys.exit(f"Could not parse pick-task output as JSON: {e}")
 
 
-def build_document(task: dict[str, Any], *, skip_repo_metadata: bool) -> dict[str, Any]:
-    doc: dict[str, Any] = {
-        "$schema": "./tasks.schema.json",
-        "resolved_at": datetime.now(timezone.utc).isoformat(),
-        "generated_by": "save-task-context",
-        "task": task,
+def run_checkout_dry_run(out_path: Path) -> dict | None:
+    """Run checkout-jira-branch --dry-run-json; context file must already contain `task`."""
+    exe = script_dir() / "checkout-jira-branch.py"
+    if not exe.is_file():
+        return {"ok": False, "error": f"Missing {exe}"}
+    service = os.environ.get("CURSOR_SERVICE_REPO", "").strip()
+    kw: dict = {
+        "capture_output": True,
+        "text": True,
     }
-    if not skip_repo_metadata:
-        doc["branch_alignment"] = dry_run_branch_alignment(task)
-        doc["repo_snapshot"] = git_repo_snapshot()
-        doc["repo_fit"] = {"status": "unknown", "notes": None}
-    return doc
+    if service:
+        kw["cwd"] = service
+    proc = subprocess.run(
+        [sys.executable, str(exe), "--dry-run-json"],
+        **kw,
+    )
+    raw = (proc.stdout or "").strip()
+    try:
+        payload = json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        return {
+            "ok": False,
+            "error": "checkout-jira-branch did not return JSON",
+            "stderr": (proc.stderr or "")[:500],
+        }
+    return payload
+
+
+def _git_prefix() -> list[str]:
+    root = os.environ.get("CURSOR_SERVICE_REPO", "").strip()
+    if root:
+        return ["git", "-C", root]
+    return ["git"]
+
+
+def git_branch() -> str:
+    proc = subprocess.run(_git_prefix() + ["branch", "--show-current"], capture_output=True, text=True)
+    if proc.returncode != 0:
+        return ""
+    return (proc.stdout or "").strip()
+
+
+def git_dirty() -> bool:
+    proc = subprocess.run(_git_prefix() + ["status", "--porcelain"], capture_output=True, text=True)
+    if proc.returncode != 0:
+        return False
+    return bool((proc.stdout or "").strip())
+
+
+def normalize_task(obj: dict) -> dict:
+    out: dict = {
+        "id": obj.get("id") or obj.get("jira_key") or "",
+        "label": obj.get("label") or obj.get("id") or "",
+        "description": obj.get("description"),
+        "command": obj.get("command"),
+        "browse_url": obj.get("browse_url"),
+        "jira_key": obj.get("jira_key"),
+    }
+    repo = obj.get("repository")
+    if isinstance(repo, str) and repo.strip():
+        out["repository"] = repo.strip()
+    elif obj.get("repository") is not None:
+        out["repository"] = obj.get("repository")
+    if obj.get("is_deployed") is not None:
+        out["is_deployed"] = bool(obj["is_deployed"])
+    return out
+
+
+def load_stdin_task() -> dict:
+    raw = sys.stdin.read()
+    if not raw.strip():
+        sys.exit("stdin is empty; pipe pick-task JSON or use --from-id / --from-pick")
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        sys.exit(f"stdin is not valid JSON: {e}")
+    if isinstance(data, dict) and "tasks" in data:
+        sys.exit(
+            "stdin contained { tasks: [...] }; pipe a single task object from pick-task stdout, "
+            "or use --from-id / --from-pick"
+        )
+    if not isinstance(data, dict):
+        sys.exit("stdin JSON must be an object")
+    return normalize_task(data)
 
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument(
+    src = p.add_mutually_exclusive_group(required=True)
+    src.add_argument(
         "--stdin",
         action="store_true",
-        help="Read JSON from stdin (e.g. after piping pick-task.py)",
+        help="Read one pick-task JSON object from stdin",
     )
+    src.add_argument("--from-id", metavar="KEY", help="Fetch task via pick-task --id KEY")
+    src.add_argument("--from-pick", type=int, metavar="N", help="Fetch task via pick-task --pick N")
     p.add_argument(
-        "file",
-        nargs="?",
+        "--out",
         type=Path,
-        help="Optional path to JSON file (ignored if --stdin)",
+        metavar="PATH",
+        help=f"Output file (default: {default_out_path()})",
     )
     p.add_argument(
-        "--skip-repo-metadata",
+        "--no-branch",
         action="store_true",
-        help="Omit branch_alignment, repo_snapshot, and repo_fit (task + timestamps only)",
-    )
-    p.add_argument(
-        "--print-json",
-        action="store_true",
-        help="Echo the written document to stdout (default: stderr path only)",
-    )
-    p.add_argument(
-        "--no-workspace-context",
-        action="store_true",
-        help="Skip refreshing .cursor/task-context/workspace-context.json after saving the task",
+        help="Do not run checkout-jira-branch --dry-run-json",
     )
     args = p.parse_args()
 
-    if args.stdin and args.file is not None:
-        sys.exit("Use either --stdin or a file path, not both")
+    if args.stdin:
+        task = load_stdin_task()
+    elif args.from_id:
+        task = normalize_task(run_pick_task(None, args.from_id.strip()))
+    else:
+        task = normalize_task(run_pick_task(args.from_pick, None))
 
-    parsed = read_input_json(args.file, args.stdin)
-    try:
-        task = extract_task_object(parsed)
-    except ValueError as e:
-        sys.exit(str(e))
-    validate_task(task)
+    confirm_continue_if_deployed_complete(task, program="save-task-context")
 
-    doc = build_document(task, skip_repo_metadata=args.skip_repo_metadata)
-    out = task_context_path()
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
-    print(f"Wrote {out}", file=sys.stderr)
+    jira_key = (task.get("jira_key") or task.get("id") or "").strip()
 
-    if not args.no_workspace_context:
+    out_path = args.out.resolve() if args.out else default_out_path()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    doc: dict = {
+        "$schema": "./tasks.schema.json",
+        "resolved_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "generated_by": "save-task-context",
+        "task": task,
+        "branch_alignment": None,
+        "repo_snapshot": {
+            "git_branch": git_branch(),
+            "git_dirty_hint": git_dirty(),
+        },
+        "repo_fit": {"status": "unknown", "notes": None},
+    }
+
+    if out_path.is_file():
         try:
-            ws_out = write_workspace_context(Path.cwd())
-            print(f"Refreshed {ws_out}", file=sys.stderr)
-        except (OSError, ValueError) as e:
-            print(f"Warning: could not refresh workspace-context.json: {e}", file=sys.stderr)
+            prev = json.loads(out_path.read_text(encoding="utf-8"))
+            rf = prev.get("repo_fit")
+            if isinstance(rf, dict) and rf.get("status") not in (None, "unknown"):
+                doc["repo_fit"] = rf
+            sr = prev.get("service_repo_root")
+            if isinstance(sr, str) and sr.strip():
+                doc["service_repo_root"] = sr.strip()
+        except (OSError, json.JSONDecodeError):
+            pass
 
-    if args.print_json:
-        print(json.dumps(doc, indent=2))
+    need_dry = (not args.no_branch) and bool(jira_key)
+
+    if need_dry:
+        doc["branch_alignment"] = None
+        out_path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+        doc["branch_alignment"] = run_checkout_dry_run(out_path)
+    elif (not args.no_branch) and not jira_key:
+        doc["branch_alignment"] = {"ok": False, "error": "task has no jira_key for branch_alignment"}
+
+    doc["repo_snapshot"] = {
+        "git_branch": git_branch(),
+        "git_dirty_hint": git_dirty(),
+    }
+
+    out_path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+    print(str(out_path))
 
 
 if __name__ == "__main__":

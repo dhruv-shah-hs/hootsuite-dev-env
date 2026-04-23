@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://hootsuite.invalid/schemas/task-context-v1.json",
   "title": "Resolved task context (pick-task + branch linkage)",
-  "description": "Written by `.cursor/tools/save-task-context`. Contains one resolved Jira task plus optional Git/Jira branch alignment from checkout-jira-branch --dry-run-json.",
+  "description": "Written by `.cursor/tools/save-task-context` and updated by `checkout-jira-branch.py` after branch alignment. Branch preview also comes from `checkout-jira-branch --dry-run-json`.",
   "type": "object",
   "required": ["resolved_at", "task"],
   "additionalProperties": true,
@@ -20,9 +20,13 @@
       "type": "string",
       "description": "Tool that produced this document (e.g. save-task-context)."
     },
+    "service_repo_root": {
+      "type": "string",
+      "description": "Path to the service git clone (relative to workspace root containing `.cursor`, or absolute). Used when cwd is not the service repo."
+    },
     "task": {
       "type": "object",
-      "description": "Same shape as a single object from pick-task stdout (see task_to_json_shape).",
+      "description": "Same shape as a single object from pick-task stdout (see task_to_json_shape). Optional repository string for verification against git origin.",
       "required": ["id", "label"],
       "additionalProperties": true,
       "properties": {
@@ -31,15 +35,19 @@
         "description": { "type": ["string", "null"] },
         "browse_url": { "type": ["string", "null"] },
         "jira_key": { "type": ["string", "null"] },
+        "repository": {
+          "type": ["string", "null"],
+          "description": "Expected Git remote URL or slug; compared (normalized) to `git remote get-url origin` in the service clone when set."
+        },
         "is_deployed": {
           "type": ["boolean", "null"],
-          "description": "Optional deployment hint (tooling-specific). Null/absent means unknown."
+          "description": "From Jira status when known: true if Done, false if Canceled/Cancelled; null/absent if unknown."
         },
         "command": { "type": ["string", "null"] }
       }
     },
     "branch_alignment": {
-      "description": "Output of checkout-jira-branch --dry-run-json for the same Jira key, or null if skipped/failed.",
+      "description": "Dry-run plan from checkout-jira-branch --dry-run-json, or post-checkout facts (checked_out_branch, aligned_at, etc.) after align-branch.",
       "oneOf": [
         { "type": "null" },
         {
@@ -47,7 +55,13 @@
           "additionalProperties": true,
           "properties": {
             "ok": { "type": "boolean" },
-            "error": { "type": "string" }
+            "error": { "type": "string" },
+            "jira_key": { "type": "string" },
+            "branch_prefix": { "type": "string" },
+            "checked_out_branch": { "type": "string" },
+            "aligned_at": { "type": "string" },
+            "planned_action": { "type": "string" },
+            "repository_check": { "type": "object", "additionalProperties": true }
           }
         }
       ]
@@ -60,6 +74,10 @@
         "git_dirty_hint": {
           "type": "boolean",
           "description": "True if git status --porcelain had output at save time."
+        },
+        "service_git_root": {
+          "type": "string",
+          "description": "Resolved path used for git operations when branch alignment ran."
         }
       }
     },

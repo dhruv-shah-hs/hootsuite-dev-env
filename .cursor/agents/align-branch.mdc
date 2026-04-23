@@ -1,0 +1,88 @@
+---
+Aligns the **service repository** git branch with the resolved Jira issue in `.cursor/task-context/current-task.local.json` using `.cursor/tools/checkout-jira-branch.py`. Run after **resolve-task** when the working tree should be on a `ISSUE-KEY_*` branch. Persists **`branch_alignment`** (and related fields) back into **`current-task.local.json`** after a successful checkout.
+name: align-branch
+model: composer-2-fast
+---
+
+# Align branch with Jira (service repo)
+
+## Purpose and boundaries
+
+**In scope:** Verify the workspace service clone matches **`task.repository`** (when set), locate or create a branch whose name starts with **`JIRA-KEY_`**, show the checked-out branch, and merge **branch alignment** details into **`.cursor/task-context/current-task.local.json`**.
+
+**Out of scope:** Picking or saving the Jira task — use **resolve-task** first. Building the context pack or tests — use **task-context-builder** or other agents.
+
+---
+
+## Workspace layout (required mental model)
+
+A typical Cursor **workspace** contains:
+
+1. **`.cursor/`** — agents, tools, and **`.cursor/task-context/current-task.local.json`** (where the resolved **`task`** lives).
+2. **Service repository** — the git clone where product code changes are made (often a **sibling** folder of `.cursor/`’s parent, e.g. `workspace/my-service/` next to `workspace/.cursor/`).
+
+Git commands for alignment run in the **service** clone, not necessarily in the directory that only holds `.cursor/` configuration. Tell the tooling which clone to use via one of:
+
+- **`CURSOR_SERVICE_REPO`** — absolute path to the service repo, or  
+- **`service_repo_root`** in **`current-task.local.json`** — path relative to the **workspace root** (parent of `.cursor`) or absolute, or  
+- **`--git-cwd DIR`** on **`checkout-jira-branch.py`** (highest precedence).
+
+**Multi-root `.code-workspace` (dev-env + service):** If you only open the folder that contains `.cursor/` (e.g. **hootsuite-dev-env**), the integrated terminal’s cwd is often that folder and **`checkout-jira-branch.py`** would otherwise fall back to **`git` in the dev-env repo** — wrong for product work. Prefer opening **`hootsuite-dev-env.code-workspace`**, which sets **`CURSOR_SERVICE_REPO`** to the **`service-entitlement`** workspace folder so repo checks and branch checkout always run against the **service** clone. Alternatively set **`service_repo_root`** (e.g. **`../service-entitlement`**) in **`current-task.local.json`** or pass **`--git-cwd`**.
+
+---
+
+## Flow (high level)
+
+1. **Prerequisite:** **`resolve-task`** has produced **`.cursor/task-context/current-task.local.json`** with a **`task`** (including **`jira_key`** / **`id`**).
+2. **Repository check:** If **`task.repository`** is set (expected origin URL or comparable string), compare it (normalized) to **`git remote get-url origin`** in the service clone.  
+   - If they differ → **stop** and surface the error **`Mismatch in repo`** (exit code **2** from the tool; agents must not continue as if aligned).  
+   - If **`task.repository`** is not set → **skip** enforcement; dry-run JSON will show **`skipped_no_task_repository`** (set **`task.repository`** when you want a hard gate).
+3. **Branch lookup:** Find branches whose names **start with** **`JIRA-KEY_`** (local and `origin/*`).
+4. **No matching branch:** Ask the human for **only the suffix** (interactive terminal). **Disclaimer:** the **full** branch name is **`JIRA-KEY_<suffix>`**; the script prints this before prompting.  
+5. **One match:** `git checkout` that branch.  
+6. **Several matches:** List branches; user picks by number.  
+7. **Persistence:** After a successful checkout, the script **merges** updates into **`current-task.local.json`** (unless **`--no-write-task-context`**): existing **`branch_alignment`** keys such as **`repository_check`**, **`suffix_validation`**, **`matching_branches`**, and **`planned_action_detail`** from **`save-task-context`** / **`--dry-run-json`** are kept unless superseded; prior **`planned_action`** / **`planned_action_detail`** are also copied to **`dry_run_planned_action`** / **`dry_run_planned_action_detail`** when checkout replaces them. **`repo_snapshot`** is merged shallowly (new git fields overlay prior keys). When the repo check is skipped, **`repo_fit.notes`** is left as-is (e.g. **`null`**) instead of overwriting with canned text.
+
+---
+
+## Commands
+
+### Interactive — human (TTY)
+
+Use the **integrated Terminal** from the workspace (or **`cd`** to the service repo and set **`CURSOR_SERVICE_REPO`** if needed).
+
+```bash
+python3 .cursor/tools/checkout-jira-branch.py
+# or, explicit service clone:
+python3 .cursor/tools/checkout-jira-branch.py --git-cwd /path/to/service
+```
+
+- If the repo check fails → stderr includes **`Mismatch in repo`** and JSON details under **`repository_check`**.
+- If creating a branch, read the **disclaimer** and enter **only** the suffix; the checked-out branch name is printed at the end (stdout: branch name; stderr: **`Checked out branch: ...`**).
+
+### Non-interactive — agent (no TTY)
+
+Agents must not rely on `input()` in the checkout tool.
+
+```bash
+python3 .cursor/tools/checkout-jira-branch.py --dry-run-json
+```
+
+Inspect **`planned_action`**: `would_checkout`, `would_prompt_new_branch`, or `would_prompt_pick_branch`; also **`repository_check`**, **`matching_branches`**, **`branch_prefix`**, **`suffix_validation`**, **`service_git_root`**.
+
+- If **`ok`** is false and **`error`** is **`Mismatch in repo`**: stop and report; do not claim branch alignment.
+- **`would_prompt_new_branch`:** use **AskQuestion** with **Continue** / **Cancel** before collecting the suffix; on continue, collect **suffix** only, then either have the user run git in Terminal or run git with explicit approval and **`git_write`** scope.
+- **`would_checkout` / `would_prompt_pick_branch`:** direct the user to the Terminal script, or checkout with approval and permissions.
+
+---
+
+## Completion message
+
+Keep chat replies **minimal**. **Do not** include a **“What ran”** section, command transcripts, bullet lists of steps, or optional tips unless the user asked or there is a **blocking** error.
+
+When branch alignment **succeeded** and **`current-task.local.json`** was updated, use **one line** only, for example:
+
+**Ready to develop** — `<branch>` (`<ISSUE-KEY>`) · `<service repo path>`.
+
+If the user **cancelled** branch creation or checkout, or **`Mismatch in repo`** occurred, **do not** claim alignment; give a **short** blocking reason (and current branch only if useful).
+
