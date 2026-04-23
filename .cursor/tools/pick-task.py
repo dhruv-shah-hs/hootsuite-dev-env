@@ -10,6 +10,9 @@ Uses Jira Cloud/Server REST API. Same variables as Jira MCP:
 Optional:
   JIRA_JQL            JQL query (default: unresolved assigned to you, by updated)
   JIRA_MAX_RESULTS    Max issues (default: 50)
+  JIRA_REPOSITORY_FIELDS  Comma-separated Jira field ids (e.g. customfield_12345) whose
+                          values populate task.repository for align-branch verification.
+                          Omit to leave repository unset unless you edit task JSON.
 
 If ./.env exists in the current working directory, it is loaded (keys already set
 in the environment are not overwritten).
@@ -20,7 +23,10 @@ Examples:
   ./pick-task --json
   ./pick-task --jql "project = ENG ORDER BY created DESC"
   ./pick-task --id PROJ-123             # fetch that issue directly (GET /issue/{key})
-  python3 .cursor/tools/pick-task --id PROJ-123 | python3 .cursor/tools/save-task-context --stdin   # persist
+  python3 .cursor/tools/pick-task.py --id PROJ-123 | python3 .cursor/tools/save-task-context.py --stdin   # persist
+
+When task.is_deployed is true (Jira Done), pick-task prompts on TTY before printing JSON (unless
+CURSOR_SKIP_DEPLOYED_CONFIRM=1).
 """
 
 from __future__ import annotations
@@ -35,6 +41,18 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from typing import Any
+
+_LIB = Path(__file__).resolve().parent.parent / "lib"
+if _LIB.is_dir() and str(_LIB) not in sys.path:
+    sys.path.insert(0, str(_LIB))
+from deployed_confirm import confirm_continue_if_deployed_complete  # noqa: E402
+
+_CURSOR_DIR = Path(__file__).resolve().parent.parent
+if str(_CURSOR_DIR) not in sys.path:
+    sys.path.insert(0, str(_CURSOR_DIR))
+
+from lib.workspace_context import write_workspace_context  # noqa: E402
 
 
 def try_load_dotenv() -> None:
@@ -94,6 +112,64 @@ def open_ticket_command(url: str) -> str:
     return f"xdg-open {shlex.quote(url)}"
 
 
+def jira_repository_field_ids() -> list[str]:
+    raw = (os.environ.get("JIRA_REPOSITORY_FIELDS") or "").strip()
+    if not raw:
+        return []
+    return [p.strip() for p in raw.split(",") if p.strip()]
+
+
+def _coerce_jira_value_to_repository_string(raw: Any) -> str:
+    """Best-effort string for Git remote URL/slug from a Jira field value."""
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        return raw.strip()
+    if isinstance(raw, dict):
+        for key in ("value", "name", "displayName", "url"):
+            v = raw.get(key)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        inner = raw.get("option")
+        if isinstance(inner, dict):
+            v = inner.get("value") or inner.get("name")
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+    return ""
+
+
+def is_deployed_from_jira_status(status_name: str) -> bool | None:
+    """Deployment hint from Jira status name (case-insensitive). Done → shipped; canceled → not."""
+    s = (status_name or "").strip().lower()
+    if s == "done":
+        return True
+    if s in ("canceled", "cancelled"):
+        return False
+    return None
+
+
+def extract_repository_from_issue_fields(fields: dict[str, Any]) -> str | None:
+    """First non-empty repository string from configured Jira fields."""
+    for fid in jira_repository_field_ids():
+        raw = fields.get(fid)
+        s = _coerce_jira_value_to_repository_string(raw)
+        if s:
+            return s
+    return None
+
+
+def jira_issue_api_field_names() -> list[str]:
+    base = ["summary", "status", "issuetype"]
+    extra = jira_repository_field_ids()
+    seen = set(base)
+    out = list(base)
+    for f in extra:
+        if f not in seen:
+            seen.add(f)
+            out.append(f)
+    return out
+
+
 def jira_issue_to_task(issue: dict, base: str) -> dict:
     """Map a Jira issue JSON object (search or GET issue) to our task shape."""
     key = issue.get("key") or ""
@@ -105,7 +181,8 @@ def jira_issue_to_task(issue: dict, base: str) -> dict:
     browse = jira_browse_url(base, key)
     desc_parts = [p for p in (status_name, type_name) if p]
     description = " · ".join(desc_parts) if desc_parts else None
-    return {
+    repository = extract_repository_from_issue_fields(fields)
+    out: dict[str, Any] = {
         "id": key,
         "label": f"{key}: {summary}",
         "description": description,
@@ -113,12 +190,19 @@ def jira_issue_to_task(issue: dict, base: str) -> dict:
         "browse_url": browse,
         "jira_key": key,
     }
+    if repository:
+        out["repository"] = repository
+    deployed = is_deployed_from_jira_status(status_name)
+    if deployed is not None:
+        out["is_deployed"] = deployed
+    return out
 
 
 def fetch_jira_issue_by_key(issue_key: str) -> dict:
     """GET /rest/api/3/issue/{key} — use for --id so keys need not appear in JQL results."""
     base = jira_base_url()
-    params = urllib.parse.urlencode({"fields": "summary,status,issuetype"})
+    names = jira_issue_api_field_names()
+    params = urllib.parse.urlencode({"fields": ",".join(names)})
     safe_key = urllib.parse.quote(issue_key, safe="")
     url = f"{base}/rest/api/3/issue/{safe_key}?{params}"
     req = urllib.request.Request(url)
@@ -143,7 +227,7 @@ def fetch_jira_issues(jql: str, max_results: int) -> list[dict]:
         ("jql", jql),
         ("maxResults", str(max_results)),
     ]
-    for field in ("summary", "status", "issuetype"):
+    for field in jira_issue_api_field_names():
         query_parts.append(("fields", field))
     params = urllib.parse.urlencode(query_parts)
     url = f"{base}/rest/api/3/search/jql?{params}"
@@ -171,12 +255,10 @@ def default_jira_jql() -> str:
 
 
 def pick_interactive(tasks: list[dict]) -> dict:
-    print("Select a task (number), or q to quit:\n", file=sys.stderr)
+    print("Pick # or q:", file=sys.stderr)
     for i, t in enumerate(tasks, start=1):
         label = t.get("label", t.get("id"))
-        desc = t.get("description") or ""
-        extra = f" — {desc}" if desc else ""
-        print(f"  {i}) {label}{extra}", file=sys.stderr)
+        print(f"  {i}) {label}", file=sys.stderr)
     while True:
         try:
             line = input("> ").strip()
@@ -195,7 +277,7 @@ def pick_interactive(tasks: list[dict]) -> dict:
 
 
 def task_to_json_shape(t: dict) -> dict:
-    return {
+    out = {
         "id": t["id"],
         "label": t.get("label", t["id"]),
         "description": t.get("description"),
@@ -203,6 +285,11 @@ def task_to_json_shape(t: dict) -> dict:
         "browse_url": t.get("browse_url"),
         "jira_key": t.get("jira_key"),
     }
+    if t.get("repository") is not None:
+        out["repository"] = t.get("repository")
+    if t.get("is_deployed") is not None:
+        out["is_deployed"] = t["is_deployed"]
+    return out
 
 
 def main() -> None:
@@ -229,6 +316,11 @@ def main() -> None:
         action="store_true",
         help="After selection, print only the command string (if any)",
     )
+    p.add_argument(
+        "--no-workspace-context",
+        action="store_true",
+        help="Do not write .cursor/task-context/workspace-context.json",
+    )
     args = p.parse_args()
 
     if args.id:
@@ -247,6 +339,17 @@ def main() -> None:
         print(json.dumps({"tasks": out}, indent=2))
         return
 
+    def refresh_workspace_context() -> None:
+        if args.no_workspace_context:
+            return
+        try:
+            cwd = Path.cwd()
+            out = write_workspace_context(cwd)
+            rel = out.relative_to(cwd.resolve())
+            print(f"Wrote workspace context: {rel}", file=sys.stderr)
+        except (OSError, ValueError) as e:
+            print(f"Warning: could not write workspace-context.json: {e}", file=sys.stderr)
+
     if args.pick is not None:
         if args.pick < 1 or args.pick > len(tasks):
             sys.exit(f"--pick must be between 1 and {len(tasks)} (inclusive)")
@@ -258,6 +361,8 @@ def main() -> None:
     else:
         chosen = pick_interactive(tasks)
 
+    refresh_workspace_context()
+
     cmd = chosen.get("command")
     if args.print_command:
         if cmd:
@@ -266,6 +371,7 @@ def main() -> None:
             sys.exit("This task has no command.")
         return
 
+    confirm_continue_if_deployed_complete(chosen, program="pick-task")
     print(json.dumps(chosen, indent=2))
 
 

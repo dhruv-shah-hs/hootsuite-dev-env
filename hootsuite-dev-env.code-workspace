@@ -1,0 +1,26 @@
+{
+  "folders": [
+    {
+      "name": "hootsuite-dev-env",
+      "path": "."
+    },
+    {
+      "name": "service-entitlement",
+      "path": "../service-entitlement"
+    }
+  ],
+  "settings": {
+    "files.watcherExclude": {
+      "**/target": true
+    },
+    "terminal.integrated.env.osx": {
+      "CURSOR_SERVICE_REPO": "${workspaceFolder:service-entitlement}"
+    },
+    "terminal.integrated.env.linux": {
+      "CURSOR_SERVICE_REPO": "${workspaceFolder:service-entitlement}"
+    },
+    "terminal.integrated.env.windows": {
+      "CURSOR_SERVICE_REPO": "${workspaceFolder:service-entitlement}"
+    }
+  }
+}
