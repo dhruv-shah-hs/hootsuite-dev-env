@@ -1,9 +1,8 @@
 {
   "$schema": "./workspace-context.schema.json",
-  "generated_at": "2026-04-22T18:52:37.014254+00:00",
-  "reference_path": ".reference",
-  "service_root": ".reference/service-entitlement",
-  "makefile": ".reference/service-entitlement/Makefile",
+  "generated_at": "2026-04-23T16:50:36.056502+00:00",
+  "service_root": "../service-entitlement",
+  "makefile": "../service-entitlement/Makefile",
   "tech_stack": {
     "languages": [
       "Scala"
@@ -125,14 +124,14 @@
     }
   ],
   "primary_commands": {
-    "run": "cd .reference/service-entitlement && make run",
-    "test": "cd .reference/service-entitlement && make test",
-    "compile_and_test": "cd .reference/service-entitlement && make compile-and-test-service",
-    "vault_setup_local_dev": "cd .reference/service-entitlement && make vault-setup-local-dev",
-    "build_service": "cd .reference/service-entitlement && make build-service",
-    "scalafmt": "cd .reference/service-entitlement && make scalafmt",
-    "run_minikube": "cd .reference/service-entitlement && make run-minikube",
-    "help": "cd .reference/service-entitlement && make help"
+    "run": "cd ../service-entitlement && make run",
+    "test": "cd ../service-entitlement && make test",
+    "compile_and_test": "cd ../service-entitlement && make compile-and-test-service",
+    "vault_setup_local_dev": "cd ../service-entitlement && make vault-setup-local-dev",
+    "build_service": "cd ../service-entitlement && make build-service",
+    "scalafmt": "cd ../service-entitlement && make scalafmt",
+    "run_minikube": "cd ../service-entitlement && make run-minikube",
+    "help": "cd ../service-entitlement && make help"
   },
   "endpoints": {
     "ports": [
@@ -151,22 +150,22 @@
     "runners": [
       {
         "name": "make test",
-        "command": "cd .reference/service-entitlement && make test",
+        "command": "cd ../service-entitlement && make test",
         "scope": "unit"
       },
       {
         "name": "make compile-and-test-service",
-        "command": "cd .reference/service-entitlement && make compile-and-test-service",
+        "command": "cd ../service-entitlement && make compile-and-test-service",
         "scope": "unit+compile"
       },
       {
         "name": "sbt test",
-        "command": "cd .reference/service-entitlement && sbt test",
+        "command": "cd ../service-entitlement && sbt test",
         "scope": "unit"
       },
       {
         "name": "make run-contract-tests",
-        "command": "cd .reference/service-entitlement && make run-contract-tests",
+        "command": "cd ../service-entitlement && make run-contract-tests",
         "scope": "contract (wasabi)"
       }
     ],
@@ -199,7 +198,7 @@
     "setup_commands": [
       {
         "name": "vault-setup-local-dev",
-        "command": "cd .reference/service-entitlement && make vault-setup-local-dev",
+        "command": "cd ../service-entitlement && make vault-setup-local-dev",
         "purpose": "Fetch Vault secrets for local dev"
       }
     ]
@@ -265,13 +264,13 @@
   ],
   "vscode_launch": {
     "path": ".vscode/launch.json",
-    "configuration_name": "Attach: reference service (JDWP)",
+    "configuration_name": "Attach: service (JDWP)",
     "service_name": "service-entitlement",
     "debug_attach": {
       "kind": "jvm-jdwp",
       "port": 5005,
       "vscode_type": "java",
-      "hint": "Start the service JVM with JDWP on port 5005, then start this attach config. Example (sbt): cd .reference/service-entitlement && SBT_OPTS=\"-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005\" make run  \u2014 or use sbt's JVM debug flag if your project documents one."
+      "hint": "Start the service JVM with JDWP on port 5005, then start this attach config. Example (sbt): cd ../service-entitlement && SBT_OPTS=\"-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005\" make run  \u2014 or use sbt's JVM debug flag if your project documents one."
     }
   }
 }

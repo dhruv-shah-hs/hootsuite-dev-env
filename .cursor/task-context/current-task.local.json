@@ -1,36 +1,36 @@
 {
   "$schema": "./tasks.schema.json",
-  "resolved_at": "2026-04-23T04:37:17Z",
+  "resolved_at": "2026-04-23T16:50:36Z",
   "generated_by": "save-task-context",
   "task": {
-    "id": "ID-5619",
-    "label": "ID-5619: Refactor v2/teams controller to use builder pattern",
+    "id": "ID-5652",
+    "label": "ID-5652: Clean Up DL behind which new AI Opt Out is hidden",
     "description": "To Do \u00b7 Task",
-    "command": "open https://hootsuite.atlassian.net/browse/ID-5619",
-    "browse_url": "https://hootsuite.atlassian.net/browse/ID-5619",
-    "jira_key": "ID-5619"
+    "command": "open https://hootsuite.atlassian.net/browse/ID-5652",
+    "browse_url": "https://hootsuite.atlassian.net/browse/ID-5652",
+    "jira_key": "ID-5652"
   },
   "branch_alignment": {
     "ok": true,
     "error": "Mismatch in repo",
-    "jira_key": "ID-5619",
+    "jira_key": "ID-5652",
     "repository_check": {
       "status": "missing_task_repository",
       "detail": "task.repository is empty. Load it from Jira via JIRA_REPOSITORY_FIELDS on pick-task, or set task.repository in current-task.local.json to your service git remote URL/slug. Use CURSOR_REQUIRE_TASK_REPOSITORY=0 only to skip this gate."
     },
-    "service_git_root": "/Users/dhruv.shah/hootsuite/hootsuite-dev-env",
-    "branch_prefix": "ID-5619_",
-    "checked_out_branch": "ID-5619_v2_teams_controller_builder",
+    "service_git_root": "/Users/phil.bugdahn/git/hootsuite-dev-env/hootsuite-dev-env",
+    "branch_prefix": "ID-5652_",
+    "checked_out_branch": "ID-5652_ai-opt-out-dl-cleanup",
     "planned_action": "checked_out_existing",
     "planned_action_detail": "Single local or origin branch matched prefix",
-    "aligned_at": "2026-04-23T04:38:03Z",
-    "current_branch": "ID-5619_v2_teams_controller_builder",
+    "aligned_at": "2026-04-23T16:51:29Z",
+    "current_branch": "ID-5652_ai-opt-out-dl-cleanup",
     "branch_aligned_with_jira": true
   },
   "repo_snapshot": {
-    "git_branch": "ID-5619_v2_teams_controller_builder",
-    "git_dirty_hint": true,
-    "service_git_root": "/Users/dhruv.shah/hootsuite/service-entitlement"
+    "git_branch": "ID-5652_ai-opt-out-dl-cleanup",
+    "git_dirty_hint": false,
+    "service_git_root": "/Users/phil.bugdahn/git/hootsuite-dev-env/service-entitlement"
   },
   "repo_fit": {
     "status": "unknown",

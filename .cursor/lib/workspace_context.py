@@ -1,9 +1,10 @@
-"""Discover service repo under `.reference`, tech stack, and Makefile targets for workspace-context.json."""
+"""Discover sibling `service-entitlement` repo, tech stack, and Makefile targets for workspace-context.json."""
 
 from __future__ import annotations
 
 import copy
 import json
+import os
 import re
 import subprocess
 from datetime import datetime, timezone
@@ -11,10 +12,27 @@ from pathlib import Path
 from typing import Any
 
 # Stable VS Code launch configuration names (used to replace prior generator runs).
-_LAUNCH_ATTACH_JAVA_NAME = "Attach: reference service (JDWP)"
-_LAUNCH_ATTACH_NODE_NAME = "Attach: reference service (Node)"
-_LAUNCH_ATTACH_PYTHON_NAME = "Attach: reference service (debugpy)"
-_LAUNCH_ATTACH_GO_NAME = "Attach: reference service (Delve)"
+_LAUNCH_ATTACH_JAVA_NAME = "Attach: service (JDWP)"
+_LAUNCH_ATTACH_NODE_NAME = "Attach: service (Node)"
+_LAUNCH_ATTACH_PYTHON_NAME = "Attach: service (debugpy)"
+_LAUNCH_ATTACH_GO_NAME = "Attach: service (Delve)"
+_LEGACY_LAUNCH_ATTACH_NAMES = frozenset(
+    {
+        "Attach: reference service (JDWP)",
+        "Attach: reference service (Node)",
+        "Attach: reference service (debugpy)",
+        "Attach: reference service (Delve)",
+    }
+)
+_ALL_LAUNCH_ATTACH_NAMES = frozenset(
+    {
+        _LAUNCH_ATTACH_JAVA_NAME,
+        _LAUNCH_ATTACH_NODE_NAME,
+        _LAUNCH_ATTACH_PYTHON_NAME,
+        _LAUNCH_ATTACH_GO_NAME,
+        *_LEGACY_LAUNCH_ATTACH_NAMES,
+    }
+)
 
 _MAKEFILE_DIRECTIVE = frozenset(
     {
@@ -37,12 +55,23 @@ _MAKEFILE_DIRECTIVE = frozenset(
 )
 
 
-def reference_dir(cwd: Path) -> Path:
-    return cwd / ".reference"
+def service_entitlement_dir(dev_env_root: Path) -> Path:
+    """Sibling clone `service-entitlement` next to this dev-env repo (see `hootsuite-dev-env.code-workspace`)."""
+    return (dev_env_root.resolve().parent / "service-entitlement").resolve()
 
 
-def _find_makefiles(ref: Path, max_depth: int = 4) -> list[Path]:
-    """Makefiles under `.reference`, bounded depth (skip huge trees)."""
+def _path_posix_relative_to(base: Path, target: Path) -> str:
+    """POSIX path from `base` to `target`, using `..` when the service is a sibling repo."""
+    br = base.resolve()
+    tr = target.resolve()
+    try:
+        return tr.relative_to(br).as_posix()
+    except ValueError:
+        return Path(os.path.relpath(tr, br)).as_posix()
+
+
+def _find_makefiles(search_root: Path, max_depth: int = 4) -> list[Path]:
+    """Makefiles under the service discovery directory, bounded depth (skip huge trees)."""
     found: list[Path] = []
 
     def walk(d: Path, depth: int) -> None:
@@ -58,11 +87,11 @@ def _find_makefiles(ref: Path, max_depth: int = 4) -> list[Path]:
         except OSError:
             return
 
-    walk(ref, 0)
+    walk(search_root, 0)
     return found
 
 
-def _pick_service_root(makefiles: list[Path], ref: Path) -> Path | None:
+def _pick_service_root(makefiles: list[Path], search_root: Path) -> Path | None:
     if not makefiles:
         return None
 
@@ -71,7 +100,7 @@ def _pick_service_root(makefiles: list[Path], ref: Path) -> Path | None:
         has_sbt = (root / "build.sbt").is_file()
         has_pkg = (root / "package.json").is_file()
         try:
-            depth = len(root.relative_to(ref).parts)
+            depth = len(root.relative_to(search_root).parts)
         except ValueError:
             depth = 99
         return (has_sbt, has_pkg, -depth, str(root))
@@ -134,7 +163,7 @@ def _git(service_root: Path, *args: str) -> tuple[int, str, str]:
 
 
 def _detect_service_git(service_root: Path) -> dict[str, Any]:
-    """Branch / HEAD / remote / dirty / ahead-behind for the service repo under `.reference`."""
+    """Branch / HEAD / remote / dirty / ahead-behind for the service repo (sibling clone)."""
     info: dict[str, Any] = {
         "is_git_repo": False,
         "branch": None,
@@ -890,13 +919,14 @@ def merge_vscode_launch_attach(root: Path, doc: dict[str, Any]) -> dict[str, Any
     if not isinstance(cfgs, list):
         cfgs = []
 
-    stable_name = cfg_out.get("name")
-    cfgs = [c for c in cfgs if not (isinstance(c, dict) and c.get("name") == stable_name)]
+    cfgs = [c for c in cfgs if not (isinstance(c, dict) and c.get("name") in _ALL_LAUNCH_ATTACH_NAMES)]
     cfgs.append(cfg_out)
     data["configurations"] = cfgs
     data.setdefault("version", "0.2.0")
 
     launch_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+    stable_name = cfg_out.get("name")
 
     try:
         rel = launch_path.relative_to(root).as_posix()
@@ -918,13 +948,12 @@ def build_workspace_context(cwd: Path | None = None) -> dict[str, Any]:
     `cwd` is the dev-env repository root (defaults to process cwd).
     """
     root = cwd or Path.cwd()
-    ref = reference_dir(root)
+    service_base = service_entitlement_dir(root)
     generated_at = datetime.now(timezone.utc).isoformat()
 
     doc: dict[str, Any] = {
         "$schema": "./workspace-context.schema.json",
         "generated_at": generated_at,
-        "reference_path": ".reference",
         "service_root": None,
         "makefile": None,
         "tech_stack": {"languages": [], "build_tools": [], "manifests": [], "summary": ""},
@@ -960,18 +989,21 @@ def build_workspace_context(cwd: Path | None = None) -> dict[str, Any]:
         "notes": [],
     }
 
-    if not ref.is_dir():
-        doc["notes"].append(".reference/ is missing or not a directory; clone or symlink the service repo there.")
-        doc["tech_stack"]["summary"] = "unknown (.reference not found)"
+    if not service_base.is_dir():
+        doc["notes"].append(
+            "Sibling `service-entitlement` directory is missing; clone it next to this dev-env repo "
+            "(same layout as `hootsuite-dev-env.code-workspace`, folder `../service-entitlement`)."
+        )
+        doc["tech_stack"]["summary"] = "unknown (service-entitlement not found)"
         return doc
 
-    makefiles = _find_makefiles(ref)
+    makefiles = _find_makefiles(service_base)
     if not makefiles:
-        doc["notes"].append("No Makefile found under .reference (within search depth).")
+        doc["notes"].append("No Makefile found under service-entitlement (within search depth).")
         doc["tech_stack"]["summary"] = "unknown (no Makefile)"
         return doc
 
-    service_root = _pick_service_root(makefiles, ref)
+    service_root = _pick_service_root(makefiles, service_base)
     assert service_root is not None
     makefile = service_root / "Makefile"
     if not makefile.is_file():
@@ -979,20 +1011,13 @@ def build_workspace_context(cwd: Path | None = None) -> dict[str, Any]:
         makefile = makefiles[0]
         service_root = makefile.parent
 
-    try:
-        service_rel = service_root.relative_to(root).as_posix()
-    except ValueError:
-        service_rel = str(service_root)
+    service_rel = _path_posix_relative_to(root, service_root)
 
     targets = _parse_make_targets(makefile)
     names = {t["name"] for t in targets}
 
     doc["service_root"] = service_rel
-    try:
-        mf_rel = makefile.relative_to(root).as_posix()
-    except ValueError:
-        mf_rel = str(makefile)
-    doc["makefile"] = mf_rel
+    doc["makefile"] = _path_posix_relative_to(root, makefile)
     doc["make_targets"] = targets
     doc["tech_stack"] = _detect_tech_stack(service_root)
     doc["toolchain"] = _detect_toolchain(service_root, doc["tech_stack"]["manifests"])
