@@ -10,7 +10,7 @@ model: composer-2-fast
 
 **In scope:** Resolve exactly one task from Jira using `.cursor/tools/pick-task`, then persist it with `.cursor/tools/save-task-context` so `.cursor/task-context/current-task.local.json` exists with a normalized **`task`** object (see `.cursor/task-context/tasks.schema.json`).
 
-**Out of scope:** Git checkout or branch creation (use the **checkout Jira branch** sub-agent next). Building a markdown context pack, repo discovery, tests, and PR review (use **task-context-builder** or other agents).
+**Out of scope:** Git checkout or branch creation (use **align-branch** next). Starting the local JVM/service (use **start-service**). Building a markdown context pack, repo discovery, tests, and PR review (use **task-context-builder** or other agents).
 
 **Success:** `save-task-context` prints the output path (default: `.cursor/task-context/current-task.local.json`); the file contains `task` with at least `id` and `label`, plus optional `jira_key`, `description`, `browse_url`, `command`, and optionally **`repository`** (expected Git origin URL/slug for **align-branch** verification).
 

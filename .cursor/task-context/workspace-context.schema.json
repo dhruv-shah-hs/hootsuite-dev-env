@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://hootsuite.invalid/schemas/workspace-context-v1.json",
   "title": "Workspace context (sibling service-entitlement + dev commands)",
-  "description": "Written by `.cursor/lib/workspace_context.py` (called from `pick-task.py`). Captures the resolved service repo (`../service-entitlement` next to this dev-env), its tech stack, toolchain pins, git state, and the Makefile commands the agent should prefer.",
+  "description": "Written by `.cursor/lib/workspace_context.py` (via `pick-task.py` after a pick or `refresh-workspace-context.py` standalone). Captures the resolved service repo (`../service-entitlement` next to this dev-env), its tech stack, toolchain pins, git state, and the Makefile commands the agent should prefer.",
   "type": "object",
   "required": ["generated_at", "tech_stack"],
   "additionalProperties": true,

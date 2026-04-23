@@ -3,7 +3,8 @@
 Read the selected task from `.cursor/task-context/current-task.local.json`
 (save-task-context / pick-task workflow), then check out a git branch named
   JIRA-TICKET-ID_<suffix>
-If no branch exists with that prefix, prompt for <suffix> and create the branch.
+If no branch exists with that prefix, propose <suffix> from the task summary,
+ask [Y/n] to accept, else prompt for a custom suffix, then create the branch.
 
 The service codebase usually lives next to `.cursor/` in the workspace; pass the
 service clone via --git-cwd, CURSOR_SERVICE_REPO, or service_repo_root in the
@@ -54,6 +55,181 @@ from lib.git import (  # noqa: E402
 
 
 EXIT_MISMATCH_REPO = 2
+
+# Max length for the suffix segment after ISSUE-KEY_ (keep full branch names manageable).
+_MAX_PROPOSED_SUFFIX_LEN = 32
+
+# Short headline-style slugs (not full-summary snake_case).
+_MAX_SLUG_PARTS = 6
+_MAX_SLUG_WORDS = 4
+_MAX_SLUG_ACRONYMS = 2
+_MAX_SLUG_WORD_CHARS = 12
+
+_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "for",
+        "to",
+        "of",
+        "in",
+        "on",
+        "at",
+        "by",
+        "with",
+        "from",
+        "as",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "could",
+        "should",
+        "may",
+        "might",
+        "must",
+        "can",
+        "this",
+        "that",
+        "these",
+        "those",
+        "it",
+        "its",
+        "we",
+        "you",
+        "they",
+        "them",
+        "he",
+        "she",
+        "who",
+        "whom",
+        "which",
+        "what",
+        "where",
+        "when",
+        "why",
+        "how",
+        "all",
+        "each",
+        "every",
+        "both",
+        "few",
+        "more",
+        "most",
+        "other",
+        "some",
+        "such",
+        "no",
+        "not",
+        "only",
+        "own",
+        "same",
+        "so",
+        "than",
+        "too",
+        "very",
+        "just",
+        "into",
+        "over",
+        "after",
+        "before",
+        "above",
+        "below",
+        "between",
+        "under",
+        "again",
+        "further",
+        "then",
+        "once",
+        "here",
+        "there",
+        "also",
+        "about",
+        "behind",
+        "during",
+        "through",
+        "any",
+        "per",
+        "via",
+        "if",
+        "but",
+        "because",
+        "until",
+        "while",
+        "although",
+        "though",
+        "please",
+        "need",
+        "needs",
+        "needed",
+        "should",
+        "could",
+        "would",
+        "using",
+        "use",
+        "used",
+        "new",
+        "old",
+        "add",
+        "remove",
+        "update",
+        "fix",
+        "fixed",
+        "ensure",
+        "make",
+        "making",
+        "made",
+        "get",
+        "got",
+        "set",
+        "see",
+        "seen",
+        "like",
+        "well",
+        "etc",
+    }
+)
+
+# Acronyms first so "DL" is not parsed as a normal word.
+_ORDERED_TOKEN_RE = re.compile(r"(?:\b[A-Z]{2,}\b)|(?:\b[A-Za-z][a-zA-Z0-9]*\b)")
+
+
+def _is_acronym_token(raw: str) -> bool:
+    return bool(raw) and raw.isalpha() and raw.isupper() and len(raw) >= 2
+
+
+def _format_acronym_for_slug(raw: str) -> str:
+    """Most 2–4 letter caps stay upper (DL, API); common expansions read better lower (ai)."""
+    low = raw.lower()
+    if low == "ai":
+        return "ai"
+    return raw
+
+
+def _truncate_proposed_suffix(s: str, max_len: int = _MAX_PROPOSED_SUFFIX_LEN) -> str:
+    """Shorten slug; prefer breaking at the last underscore so words are not cut mid-token."""
+    if len(s) <= max_len:
+        return s
+    chunk = s[:max_len].rstrip("._-")
+    if "_" in chunk:
+        head, _, _tail = chunk.rpartition("_")
+        if len(head) >= 6:
+            return head.rstrip("._-")
+    return chunk or s[:max_len].rstrip("._-")
 
 
 def task_context_path() -> Path:
@@ -146,9 +322,88 @@ def verify_repository_alignment(task: dict[str, Any], repo_root: Path) -> dict[s
     return out
 
 
-def prompt_suffix(prefix: str, jira_key: str) -> str:
+def proposed_suffix_from_task(task: dict[str, Any]) -> str:
+    """Short headline-style suffix from Jira summary (keywords + acronyms, not a full sentence)."""
+    label = (task.get("label") or task.get("summary") or "").strip()
+    jira_key = (task.get("jira_key") or task.get("id") or "").strip()
+    if jira_key and label.upper().startswith(jira_key.upper()):
+        label = label[len(jira_key) :].lstrip(" :_-—\t")
+    if not label:
+        return "wip"
+
+    parts: list[str] = []
+    seen_lower: set[str] = set()
+    n_words = 0
+    n_acros = 0
+
+    for m in _ORDERED_TOKEN_RE.finditer(label):
+        if len(parts) >= _MAX_SLUG_PARTS:
+            break
+        raw = m.group(0)
+        if _is_acronym_token(raw):
+            if n_acros >= _MAX_SLUG_ACRONYMS:
+                continue
+            low = raw.lower()
+            if low in seen_lower:
+                continue
+            parts.append(_format_acronym_for_slug(raw))
+            seen_lower.add(low)
+            n_acros += 1
+            continue
+
+        w = raw.lower()
+        if len(w) < 2 or w in _STOPWORDS:
+            continue
+        if len(w) > _MAX_SLUG_WORD_CHARS:
+            continue
+        if w in seen_lower:
+            continue
+        if n_words >= _MAX_SLUG_WORDS:
+            continue
+        parts.append(w)
+        seen_lower.add(w)
+        n_words += 1
+
+    if not parts:
+        # Fallback: first alnum chunk from label (legacy-ish), still short.
+        m = re.search(r"[A-Za-z][A-Za-z0-9]{1,11}", label)
+        if not m:
+            return "wip"
+        parts = [m.group(0).lower()]
+
+    s = "_".join(parts)
+    s = _truncate_proposed_suffix(s)
+    return s or "wip"
+
+
+def _validate_suffix_fragment(suffix: str) -> None:
+    if not suffix:
+        sys.exit("Suffix is empty; aborting.")
+    if "/" in suffix or suffix.startswith(".") or ".." in suffix:
+        sys.exit("Invalid suffix: avoid '/', leading '.', and '..'.")
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", suffix):
+        sys.exit("Use only letters, digits, ._- in the suffix.")
+
+
+def prompt_suffix(prefix: str, jira_key: str, task: dict[str, Any]) -> str:
+    proposed = proposed_suffix_from_task(task)
+    full_proposed = f"{prefix}{proposed}"
     print(
-        f"No {jira_key}_* branch. Enter suffix ({prefix}<suffix>; letters, digits, ._-):",
+        f"No {jira_key}_* branch yet.\n"
+        f"Proposed new branch: {full_proposed}",
+        file=sys.stderr,
+    )
+    try:
+        yn = input("Use this name? [Y/n]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print("", file=sys.stderr)
+        sys.exit(1)
+    if yn in ("", "y", "yes"):
+        _validate_suffix_fragment(proposed)
+        return proposed
+
+    print(
+        f"Enter a different suffix only ({prefix}<suffix>; letters, digits, ._-):",
         file=sys.stderr,
     )
     try:
@@ -156,12 +411,7 @@ def prompt_suffix(prefix: str, jira_key: str) -> str:
     except (EOFError, KeyboardInterrupt):
         print("", file=sys.stderr)
         sys.exit(1)
-    if not line:
-        sys.exit("Suffix is empty; aborting.")
-    if "/" in line or line.startswith(".") or ".." in line:
-        sys.exit("Invalid suffix: avoid '/', leading '.', and '..'.")
-    if not re.fullmatch(r"[A-Za-z0-9._-]+", line):
-        sys.exit("Use only letters, digits, ._- in the suffix.")
+    _validate_suffix_fragment(line)
     return line
 
 
@@ -184,6 +434,15 @@ def pick_from_list(items: list[str], label: str) -> str:
         print(f"Choose between 1 and {len(items)}.", file=sys.stderr)
 
 
+def _proposal_block(task: dict[str, Any], jira_key: str) -> dict[str, str]:
+    """Always-available proposed suffix/full branch (depends only on task data, not git)."""
+    proposed_suffix = proposed_suffix_from_task(task) if task else "wip"
+    return {
+        "proposed_suffix": proposed_suffix,
+        "proposed_full_branch": f"{jira_key}_{proposed_suffix}",
+    }
+
+
 def dry_run_payload(
     task: dict[str, Any],
     *,
@@ -201,11 +460,15 @@ def dry_run_payload(
             "service_git_root": str(repo_root),
         }
 
+    proposal = _proposal_block(task, jira_key)
+
     if repository_check.get("status") == "missing_task_repository":
         return {
             "ok": False,
             "error": "Mismatch in repo",
             "jira_key": jira_key,
+            "branch_prefix": f"{jira_key}_",
+            **proposal,
             "repository_check": repository_check,
             "service_git_root": str(repo_root),
         }
@@ -215,6 +478,8 @@ def dry_run_payload(
             "ok": False,
             "error": "Mismatch in repo",
             "jira_key": jira_key,
+            "branch_prefix": f"{jira_key}_",
+            **proposal,
             "repository_check": repository_check,
             "service_git_root": str(repo_root),
         }
@@ -224,6 +489,8 @@ def dry_run_payload(
             "ok": False,
             "error": repository_check.get("detail") or "Cannot verify repository",
             "jira_key": jira_key,
+            "branch_prefix": f"{jira_key}_",
+            **proposal,
             "repository_check": repository_check,
             "service_git_root": str(repo_root),
         }
@@ -231,11 +498,14 @@ def dry_run_payload(
     prefix = f"{jira_key}_"
     matches = branches_with_prefix(prefix, repo_root=repo_root)
     head = current_branch_name(repo_root=repo_root)
+    proposed_suffix = proposal["proposed_suffix"]
+    proposed_full_branch = proposal["proposed_full_branch"]
     if len(matches) == 0:
         action = "would_prompt_new_branch"
         detail = (
             "No local or origin/* branch starts with this prefix; interactive run would "
-            "prompt for a suffix and run git checkout -b <prefix><suffix>. "
+            "show a proposed branch name from the task summary, ask [Y/n] to accept or "
+            "prompt for a custom suffix, then run git checkout -b <prefix><suffix>. "
             "Suffix rules: letters, digits, ._- only; no '/', leading '.', or '..'."
         )
     elif len(matches) == 1:
@@ -248,7 +518,7 @@ def dry_run_payload(
             "wait for a numeric choice."
         )
     aligned = head in matches if matches else False
-    return {
+    out: dict[str, Any] = {
         "ok": True,
         "jira_key": jira_key,
         "branch_prefix": prefix,
@@ -264,7 +534,10 @@ def dry_run_payload(
         },
         "repository_check": repository_check,
         "service_git_root": str(repo_root),
+        "proposed_suffix": proposed_suffix,
+        "proposed_full_branch": proposed_full_branch,
     }
+    return out
 
 
 def merge_branch_alignment_into_context(
@@ -392,7 +665,7 @@ def main() -> None:
     aligned_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     if len(matches) == 0:
-        suffix = prompt_suffix(prefix, jira_key)
+        suffix = prompt_suffix(prefix, jira_key, task)
         full = f"{prefix}{suffix}"
         proc = run_git("checkout", "-b", full, check=False, repo_root=repo_root)
         if proc.returncode != 0:

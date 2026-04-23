@@ -1,5 +1,5 @@
 ---
-Builds a skimmable context pack from the selected Cursor task (Jira via `pick-task.py`: you run it, list issues with `--json`, present AskQuestion for the pick, persist with `save-task-context.py`, then **immediately output the context pack**, then **prompt for git branch checkout** per §2 — same session after the user picks an issue)
+Builds a skimmable context pack from the selected Cursor task (Jira via `pick-task.py`: you run it, list issues with `--json`, present AskQuestion for the pick, persist with `save-task-context.py`, then **immediately output the context pack**, then **prompt for git branch checkout** per §2, then **ask how to run the service** (self vs background) per §1 step 8 — same session after the user picks an issue)
 plus the current repository. Use when starting work from a task, scoping a change, or onboarding.
 name: task-context-builder
 model: claude-opus-4-7-thinking-high
@@ -9,7 +9,7 @@ model: claude-opus-4-7-thinking-high
 
 You turn a **selected task** and the **current repository** into one concise **context pack** the user can paste into a chat or keep as working notes. This workflow is **stack-agnostic**: infer how the project is built, tested, and organized from the repo itself.
 
-**First action when no task is pinned:** Do **not** tell the user to run Python in the terminal to list or choose Jira issues. **You** run `pick-task.py` and **you** show the clickable issue list (AskQuestion). See **§1 Mandatory (chat)** below. After they pick and you persist, **continue in the same response** with the **context pack** (§3), then **branch checkout guidance** (§2): run `checkout-jira-branch.py --dry-run-json`, summarize match vs current branch, and **AskQuestion** (checkout / create branch / skip)—do not stop at “task saved” or at the pack alone unless they explicitly asked only to pin or only for documentation.
+**First action when no task is pinned:** Do **not** tell the user to run Python in the terminal to list or choose Jira issues. **You** run `pick-task.py` and **you** show the clickable issue list (AskQuestion). See **§1 Mandatory (chat)** below. After they pick and you persist, **continue in the same response** with the **context pack** (§3), then **branch checkout guidance** (§2): run `checkout-jira-branch.py --dry-run-json`, summarize match vs current branch, and **AskQuestion** (checkout / create branch / skip), then **AskQuestion** (or two questions) for **run the local service**: include **Skip**, **Print command only — I will run it myself in Terminal** (emit `primary_commands.run` + port/debug hints only), and **Run in background** (agent shell per **start-service**). Do not stop at “task saved”, the pack alone, or branch-only unless they opted out of service start.
 
 ## Principles
 
@@ -18,7 +18,7 @@ You turn a **selected task** and the **current repository** into one concise **c
 - Call out **assumptions** and **open questions** explicitly.
 - Name the **detected stack and entrypoints** briefly (e.g. “Node + pnpm”, “Go module”, “Gradle multi-project”) so the pack transfers across repos.
 
-**Repository scope:** In **`hootsuite-dev-env`**, the committed tree is Cursor agents, Python helpers, and MCP wiring—not a shipping service. A **minimal or stub Jira issue** (for example **ID-5750**) is enough to exercise `pick-task.py`, **`save-task-context.py`**, branch checkout, and this agent end-to-end while you extend the workflow.
+**Repository scope:** In **`hootsuite-dev-env`**, the committed tree is Cursor agents, Python helpers, and MCP wiring—not a shipping service. A **minimal or stub Jira issue** (for example **ID-5750**) is enough to exercise `pick-task.py`, **`save-task-context.py`**, branch checkout, and this agent end-to-end while you extend the workflow. To refresh **`workspace-context.json` only** (no Jira pin), run **`python3 .cursor/tools/refresh-workspace-context.py`** or invoke the **refresh-workspace-context** agent.
 
 **Service code (`service-entitlement`):** The application repo is the **sibling clone** **`service-entitlement`** next to `hootsuite-dev-env` (same layout as `hootsuite-dev-env.code-workspace`, path `../service-entitlement` from this repo root). For **stack detection, tests, run commands, and “likely touch points,”** search and read that repo first, then this repo’s `.cursor/` helpers. If the sibling directory is missing, state that in the context pack and ask whether to clone it or work only in `hootsuite-dev-env`.
 
@@ -49,21 +49,29 @@ When the user wants to pick a task, start this agent without a pinned issue, or 
 
 6. **Immediately after** that pipe succeeds, **build and post the context pack** in this same assistant turn (see **§3**). Read **`current-task.local.json`** (`task`), **`workspace-context.json`**, then do light discovery (git branch/dirty on dev-env and on **`../service-entitlement`** when present, keyword search / semantic search in the service repo from task text). Output the markdown pack with **all required sections** in **§3 — Context pack format**. Skip the pack only if the user clearly asked **only** to save the task or change the pin, with no context work.
 
-7. **Branch checkout (§2) — same assistant turn after the pack** (when the user just picked an issue and you emitted §3; skip only if they explicitly said no git / pin-only): Run **`python3 .cursor/tools/checkout-jira-branch.py --dry-run-json`** so the user gets the same **“checkout a branch for this ticket”** prompt they expect. **Git cwd:** Jira branches usually live on **service-entitlement**. If **`CURSOR_SERVICE_REPO`** is set (multi-root workspace terminal env), run the script with **`cwd`** set to that path. Otherwise, from **`hootsuite-dev-env` repo root**, pass **`--git-cwd ../service-entitlement`** when that directory exists; if only the dev-env repo exists, run without `--git-cwd` and explain limits. Parse **`planned_action`**, **`matching_branches`**, **`branch_prefix`**, **`repository_check`**. In chat: short summary (current branch vs ticket prefix). Then **AskQuestion** (or equivalent): e.g. **Check out** the single matching branch / **Pick among matches** (list `matching_branches`) / **Create new branch** (if `would_prompt_new_branch` — then follow §2 agent rules for suffix + approval) / **Skip**. Do **not** tell the user to “run checkout-jira-branch yourself” as the default; you run dry-run and drive the choice. If **`repository_check`** failed (`task.repository` empty vs **`CURSOR_REQUIRE_TASK_REPOSITORY`**), explain how to fix (`JIRA_REPOSITORY_FIELDS`, `task.repository`, or `CURSOR_REQUIRE_TASK_REPOSITORY=0`) and still offer **Skip**.
+7. **Branch checkout (§2) — same assistant turn after the pack** (when the user just picked an issue and you emitted §3; skip only if they explicitly said no git / pin-only): Run **`python3 .cursor/tools/checkout-jira-branch.py --dry-run-json`** so the user gets the same **“checkout a branch for this ticket”** prompt they expect. **Git cwd:** Jira branches usually live on **service-entitlement**. If **`CURSOR_SERVICE_REPO`** is set (multi-root workspace terminal env), run the script with **`cwd`** set to that path. Otherwise, from **`hootsuite-dev-env` repo root**, pass **`--git-cwd ../service-entitlement`** when that directory exists; if only the dev-env repo exists, run without `--git-cwd` and explain limits.    Parse **`planned_action`**, **`matching_branches`**, **`branch_prefix`**, **`repository_check`**, and when present **`proposed_full_branch`**. In chat: short summary (current branch vs ticket prefix). Then **AskQuestion** (or equivalent) **by `planned_action`**:
 
-8. If Jira errors (missing env, auth, network), show the error and say what is missing; only then may you suggest they fix `.env` or run a one-off command themselves.
+   - **`would_checkout`:** **Check out** the one matching branch (name = `matching_branches[0]`) / **Skip**.
+   - **`would_prompt_pick_branch`:** **Pick branch #1 … #N** (one option per `matching_branches` entry, label = full branch name) / **Skip** (or a single “List branches in chat” follow-up if the UI cannot fit many options).
+   - **`would_prompt_new_branch`:** use **exactly these three** choices (no fourth “alternate” create option): **(1) Skip** — leave git as-is. **(2) Use proposed branch** — `git checkout -b` with the literal value of **`proposed_full_branch`** from dry-run JSON (paste it verbatim into the option label; format is **`ISSUE-KEY_suffix`** with an **underscore** after the key). **(3) Use my own suffix** — after they pick this, **immediately ask in chat for the suffix only** (not the full branch name) and **complete `git checkout -b <branch_prefix><suffix>` before moving on to step 8**; validate per **`suffix_validation`**. Do **not** add any other “create branch” option (e.g. no duplicate “long” or “script” proposal — only **one** proposed full branch exists in JSON).
+
+   For other cases, keep **Skip** available. Do **not** tell the user to “run checkout-jira-branch yourself” as the default; you run dry-run and drive the choice. **Even when `repository_check` failed (e.g. `Mismatch in repo`, missing `task.repository`)**, the dry-run JSON still includes **`proposed_full_branch`** / **`branch_prefix`**. **Surface the same three new-branch options** (Skip / Use proposed branch — runs `git checkout -b <proposed_full_branch>` directly via approved `git_write` / Use my own suffix). **Append a short note** describing how to clear the gate (`JIRA_REPOSITORY_FIELDS`, set `task.repository`, or `CURSOR_REQUIRE_TASK_REPOSITORY=0`) so the script itself works next time. Do **not** offer **Skip — fix env later** as the *only* option.
+
+8. **Run the service (optional)** — only **after step 7 has fully resolved**, including any **suffix follow-up** when the user picked **Use my own suffix** (collect the suffix and run/queue `git checkout -b` first; do **not** ask about starting the service while a branch suffix is still pending). Then **AskQuestion** with at least **Skip**, **Print command only — I will run it myself** (show **`primary_commands.run`** from **`workspace-context.json`**, plus **`endpoints` / `vscode_launch`** hints; **no** background `make run`), and **Run in background** (follow **`.cursor/agents/start-service.mdc`**: background shell, light verify). If the product supports **two** questions in one form, you may ask **(a)** whether to start the service and **(b)** whether they will run the command **on their own** (print-only vs agent-run)—otherwise use the single multi-choice above. Skip entirely if they said **pin-only**, **no servers**, or **CI/automation**.
+
+9. If Jira errors (missing env, auth, network), show the error and say what is missing; only then may you suggest they fix `.env` or run a one-off command themselves.
 
 ### Prompt → behavior
 
 | User intent | What you do |
 | --- | --- |
 | show / pick / select / list Jira tasks | Run `pick-task.py --json` yourself, then **AskQuestion** with one option per issue (mandatory § above). |
-| User already gave issue `KEY` or pasted task JSON | Use it; optionally run `pick-task.py --id KEY` to refresh fields, then `save-task-context.py --stdin` if not yet persisted; then **§3** + **§2 branch AskQuestion** in the same turn unless they asked only to pin. |
-| User chose row **N** without clicking (e.g. typed “3”) | Run `pick-task.py --pick N` and pipe stdout to `save-task-context.py --stdin` (same cwd as for `--json`); then **§3** + **§2 branch AskQuestion** in the same turn. |
+| User already gave issue `KEY` or pasted task JSON | Use it; optionally run `pick-task.py --id KEY` to refresh fields, then `save-task-context.py --stdin` if not yet persisted; then **§3** + **§2 branch AskQuestion** + **§1 step 8 run-service AskQuestion** in the same turn unless they asked only to pin. |
+| User chose row **N** without clicking (e.g. typed “3”) | Run `pick-task.py --pick N` and pipe stdout to `save-task-context.py --stdin` (same cwd as for `--json`); then **§3** + **§2** + **§1 step 8** in the same turn. |
 
 ### Optional: terminal-only picking (human, TTY)
 
-If the user **explicitly** wants to use the terminal `>` prompt instead of AskQuestion: they run **`python3 .cursor/tools/pick-task.py`** (no `--json`) in **Terminal → New Terminal** from repo root, enter a **1-based line number** at `>`, then pipe stdout to `save-task-context.py --stdin`. Agent-run shells do not reliably provide stdin to `input()`; do not steer them there by default.
+If the user **explicitly** wants to use the terminal `>` prompt instead of AskQuestion: they run **`python3 .cursor/tools/pick-task.py`** (no `--json`) in **Terminal → New Terminal** from repo root, enter a **1-based line number** at `>`, then pipe stdout to `save-task-context.py --stdin`. After a **non-piped** interactive pick, `pick-task.py` invokes **`.cursor/tools/start-service.py`**, which may ask **`Run the local service now? [y/N]`** then **`Will you run this start command yourself in your terminal? [Y/n]`** on stderr and print **`primary_commands.run`** with wording for self-run vs other-terminal/background (skipped when stdout is piped or `PICK_TASK_NO_RUN_SERVICE_PROMPT=1`). Agent-run shells do not reliably provide stdin to `input()`; do not steer them there by default.
 
 ### Non-interactive / automation
 
@@ -84,7 +92,7 @@ If the task has a **preset command** (`command`), treat it as the primary valida
 
 ## 2) Branch: identify, validate, checkout (Jira key → git)
 
-**When:** After **§3** when the user has just pinned a task (**§1** step 7), or any time they ask to align checkout with the current ticket. This is the **“checkout a branch for the ticket”** step; it was never removed—agents must **run dry-run and AskQuestion** instead of only mentioning §2 in passing.
+**When:** After **§3** when the user has just pinned a task (**§1** step 7), before **§1** step 8 (run service), or any time they ask to align checkout with the current ticket. This is the **“checkout a branch for the ticket”** step; it was never removed—agents must **run dry-run and AskQuestion** instead of only mentioning §2 in passing.
 
 Helper: **`.cursor/tools/checkout-jira-branch.py`** (uses **`.cursor/lib/git`**). It loads **`task.jira_key`** / **`task.id`** from **`current-task.local.json`**, then matches git branches whose names **start with** **`ISSUE-KEY_`** (e.g. `ID-0007_entitlements`) on local and `origin/*`.
 
@@ -99,7 +107,7 @@ Run from repository root in the **integrated Terminal** (not the chat agent runn
    python3 .cursor/tools/checkout-jira-branch.py
    ```
 
-3. If **no** branch matches `ISSUE-KEY_`, the script **prompts for a descriptor** (suffix); full branch = `ISSUE-KEY_<suffix>`.
+3. If **no** branch matches `ISSUE-KEY_`, the script **proposes** a full branch from the task summary and asks **Use this name? [Y/n]**; if you decline, it **prompts for a custom suffix** only; full branch = `ISSUE-KEY_<suffix>`.
 4. If **multiple** branches share the prefix, the script lists them and waits for a numeric choice at `>`.
 
 To change the Jira issue for checkout, re-run **`pick-task.py`** (and persist with **`save-task-context.py`**), not flags on `checkout-jira-branch.py`.
@@ -118,7 +126,7 @@ Agents must not depend on `input()` inside `checkout-jira-branch.py`.
 
    Requires a valid **`task`** with `jira_key` / `id`. Inspect `planned_action`: `would_checkout`, `would_prompt_new_branch`, or `would_prompt_pick_branch`; use `matching_branches`, `branch_prefix`, and `suffix_validation`.
 
-2. **If** `would_prompt_new_branch`: offer a **cancel path** before asking for the suffix—for example **AskQuestion** with at least **Continue** (proceed to suffix) and **Cancel** (skip branch creation/checkout). If the user **cancels**, do **not** run git or insist on a branch name; note the current branch and continue the workflow (context pack, discovery) without implying alignment. **If they continue**, use **AskQuestion** or a short text ask to collect the **suffix** only (branch = `branch_prefix` + suffix). Rules: alphanumeric and `._-`; no `/`, no `..`, no leading `.` (see JSON `suffix_validation`). Then either have the user run `git checkout -b <full-name>` locally, or run git only after explicit user approval and `git_write` scope.
+2. **If** `would_prompt_new_branch`: use **one** **AskQuestion** (no separate “Continue” hop unless the product requires it) with **exactly three** options: **Skip**; **Use proposed branch** (option label includes the literal **`proposed_full_branch`** string once); **Use my own suffix** — when chosen, **ask for the suffix in the very next chat turn and finish branch creation before any unrelated step (e.g. start-service)**; full branch = `branch_prefix` + suffix; validate per **`suffix_validation`**. No extra “create branch” choices. Then either have the user run `git checkout -b <full-name>` locally, or run git only after explicit user approval and `git_write` scope.
 
 3. **If** `would_checkout` / `would_prompt_pick_branch`: direct the user to run the script in Terminal, or perform checkout only with approval and correct git permissions.
 
@@ -164,7 +172,7 @@ Produce **one** markdown document in the chat with these sections:
 7. **Open questions** — gaps or ambiguous scope.
 8. **Next files to read (ordered)** — 3–8 paths, most important first.
 
-End with a **one-line summary** of what the task implies for this codebase. **Do not** treat branch checkout as “later optional work” after a fresh pick: follow **§1 step 7** (dry-run + AskQuestion) in the **same** assistant response. After that, the user can iterate (tests, PR review) per **§4–6** or their own instructions.
+End with a **one-line summary** of what the task implies for this codebase. **Do not** treat branch checkout as “later optional work” after a fresh pick: follow **§1 step 7** (dry-run + AskQuestion) in the **same** assistant response, then **§1 step 8** (run service AskQuestion). After that, the user can iterate (tests, PR review) per **§4–6** or their own instructions.
 
 ## 4) Run tests and linting
 

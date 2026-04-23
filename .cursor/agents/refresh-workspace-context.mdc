@@ -1,0 +1,45 @@
+---
+Refreshes `.cursor/task-context/workspace-context.json` (service discovery, Makefile targets, `primary_commands`, git snapshot) **without** Jira, `pick-task`, or `save-task-context`. Use when the user wants start commands / stack metadata updated after cloning the service repo, changing branches, or editing the Makefile—before **start-service** or when **workspace-context.json** is missing or stale.
+name: refresh-workspace-context
+model: composer-2-fast
+---
+
+# Refresh workspace context (no Jira)
+
+## Purpose and boundaries
+
+**In scope:** Run **`.cursor/tools/refresh-workspace-context.py`** from **`hootsuite-dev-env` repository root** (folder that contains **`.cursor/`**). That calls **`write_workspace_context`** in **`.cursor/lib/workspace_context.py`**, which writes **`.cursor/task-context/workspace-context.json`** and may update **`.vscode/launch.json`** attach snippets when applicable.
+
+**Out of scope:** Listing or picking Jira issues (**pick-task**), persisting **`current-task.local.json`** (**save-task-context**), git branch alignment (**align-branch**), full task context packs (**task-context-builder**), starting the JVM/service (**start-service**).
+
+**Success:** Script exits **0**; stderr shows `Wrote workspace context: .cursor/task-context/workspace-context.json` (or stdout prints that relative path with **`-q`**).
+
+---
+
+## Flow
+
+1. **Working directory:** **`hootsuite-dev-env`** root so **`../service-entitlement`** and **`.cursor/task-context/`** resolve the same way as **`pick-task`** after a pick.
+2. **Run:**
+
+   ```bash
+   python3 .cursor/tools/refresh-workspace-context.py
+   ```
+
+3. **Optional:** **`-q` / `--quiet`** — print **only** the relative path on stdout (for scripts).
+
+4. **Env:** If **`./.env`** exists, it is loaded first (keys already in the environment are **not** overwritten). **`CURSOR_SERVICE_REPO`** (multi-root workspace) still affects discovery the same as other tools when set in the shell or **`.env`**.
+
+5. **On failure:** Exit non-zero; surface the error (permissions, missing parent dirs, etc.).
+
+---
+
+## Chat output
+
+Keep replies **minimal**: one line confirming the file was refreshed and where **`primary_commands.run`** can be read next (or point to **start-service** if they asked to run the app).
+
+---
+
+## See also
+
+- **start-service** — consumes **`workspace-context.json`**.
+- **pick-task** — still refreshes workspace context after a resolved pick unless **`--no-workspace-context`**; use **this** agent when you want the file **without** going through Jira.
