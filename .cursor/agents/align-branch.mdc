@@ -10,7 +10,7 @@ model: composer-2-fast
 
 **In scope:** Verify the workspace service clone matches **`task.repository`** (when set), locate or create a branch whose name starts with **`JIRA-KEY_`**, show the checked-out branch, and merge **branch alignment** details into **`.cursor/context/current-task.local.json`**.
 
-**Out of scope:** Picking or saving the Jira task — use **resolve-task** first. **Writing `service-context.json`** — use **resolve-service** (after branch alignment) via `.cursor/tools/resolve-service.py`. Ad-hoc or heavy test/coverage work — use **task-context-builder** or other agents.
+**Out of scope:** Picking or saving the Jira task — use **resolve-task** first. Building the context pack or tests — use **task-context-builder** or other agents.
 
 ---
 
@@ -82,7 +82,7 @@ Keep chat replies **minimal**. **Do not** include a **“What ran”** section, 
 
 When branch alignment **succeeded** and **`current-task.local.json`** was updated, use **one line** only, for example:
 
-**Ready to develop** — `<branch>` (`<ISSUE-KEY>`) · `<service repo path>`. **Next** — run **resolve-service** to refresh `service-context.json` when you need the agent context pack.
+**Ready to develop** — `<branch>` (`<ISSUE-KEY>`) · `<service repo path>`.
 
 If the user **cancelled** branch creation or checkout, or **`Mismatch in repo`** occurred, **do not** claim alignment; give a **short** blocking reason (and current branch only if useful).
 

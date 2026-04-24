@@ -43,42 +43,6 @@
           "type": ["boolean", "null"],
           "description": "From Jira status when known: true if Done, false if Canceled/Cancelled; null/absent if unknown."
         },
-        "status": {
-          "type": ["string", "null"],
-          "description": "Jira workflow status name (e.g. In Progress, In Review, Done) from pick-task; null if Jira did not return a name."
-        },
-        "attachments": {
-          "type": "array",
-          "description": "Jira file attachments (images, video, audio, other): metadata and download URLs. Inline media in description/comments is expanded with these in pick-task when ids match.",
-          "items": {
-            "type": "object",
-            "additionalProperties": true,
-            "properties": {
-              "id": { "type": "string" },
-              "filename": { "type": "string" },
-              "mimeType": { "type": "string" },
-              "size": { "type": ["integer", "null"] },
-              "content_url": { "type": ["string", "null"] },
-              "thumbnail_url": { "type": ["string", "null"] },
-              "kind": { "type": "string", "description": "image, video, audio, or file (from mime type)" }
-            }
-          }
-        },
-        "comments": {
-          "type": "array",
-          "description": "Jira issue comments (when fetched): oldest first, plaintext body from Atlassian Document Format.",
-          "items": {
-            "type": "object",
-            "additionalProperties": true,
-            "properties": {
-              "id": { "type": "string" },
-              "author": { "type": ["string", "null"] },
-              "created": { "type": ["string", "null"] },
-              "updated": { "type": ["string", "null"] },
-              "body": { "type": ["string", "null"] }
-            }
-          }
-        },
         "command": { "type": ["string", "null"] }
       }
     },

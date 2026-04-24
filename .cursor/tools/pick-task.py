@@ -27,15 +27,6 @@ Examples:
 
 When task.is_deployed is true (Jira Done), pick-task prompts on TTY before printing JSON (unless
 CURSOR_SKIP_DEPLOYED_CONFIRM=1).
-
-For the selected task, Jira issue comments are fetched and included as task.comments (plaintext body)
-when any exist (separate /comment API, paginated). Omitted for --json when JQL returns multiple issues;
-fetched for --id, a single JQL result, and interactive / --pick selection.
-
-Jira `attachment` field is requested for each issue: `task.attachments` lists files with `kind` (image/video/audio/file) and Jira `content` URLs. Inlined media in the description and comments is turned into bracketed lines that reference the same files when the attachment id matches the ADF `media` node.
-
-To refresh `.cursor/context/service-context.json`, use `python3 .cursor/tools/resolve-service.py`
-(typically after `align-branch`), or pass `--write-service-context` to pick-task to opt in.
 """
 
 from __future__ import annotations
@@ -61,12 +52,32 @@ _CURSOR_DIR = Path(__file__).resolve().parent.parent
 if str(_CURSOR_DIR) not in sys.path:
     sys.path.insert(0, str(_CURSOR_DIR))
 
-from lib.jira import (  # noqa: E402
-    jira_field_description_to_plaintext,
-    jira_fields_attachments_normalize,
-)
-from lib.service_context import ServiceContextUnresolvedError, write_service_context  # noqa: E402
-from lib.dotenv import try_load_dotenv  # noqa: E402
+from lib.workspace_context import write_workspace_context  # noqa: E402
+
+
+def try_load_dotenv() -> None:
+    """Load ./.env if present; does not override existing environment variables."""
+    path = Path.cwd() / ".env"
+    if not path.is_file():
+        return
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    for line in content.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        val = val.strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
+            val = val[1:-1]
+        os.environ[key] = val
 
 
 def jira_base_url() -> str:
@@ -137,91 +148,6 @@ def is_deployed_from_jira_status(status_name: str) -> bool | None:
     return None
 
 
-def _attachment_index_from_task(task: dict[str, Any]) -> dict[str, dict] | None:
-    """id -> attachment dict for ADF media / comment body resolution."""
-    raw = task.get("attachments")
-    if not isinstance(raw, list) or not raw:
-        return None
-    m: dict[str, dict] = {}
-    for a in raw:
-        if isinstance(a, dict) and a.get("id") is not None:
-            m[str(a["id"])] = a
-    return m or None
-
-
-def jira_comment_to_item(
-    comment: dict[str, Any],
-    attachment_index: dict[str, dict] | None = None,
-) -> dict[str, Any]:
-    """Map one Jira comment JSON object to a small plaintext shape."""
-    body = jira_field_description_to_plaintext(
-        comment.get("body"), attachment_index=attachment_index
-    )
-    author = comment.get("author") or comment.get("updateAuthor") or {}
-    display: str | None
-    if isinstance(author, dict):
-        display = (author.get("displayName") or author.get("name") or "") or None
-    else:
-        display = None
-    raw_id = comment.get("id")
-    return {
-        "id": str(raw_id) if raw_id is not None else "",
-        "author": display,
-        "created": comment.get("created"),
-        "updated": comment.get("updated"),
-        "body": body,
-    }
-
-
-def jira_max_comments_per_issue() -> int:
-    """0 = no cap (page until done). Otherwise stop after this many comments."""
-    try:
-        return int((os.environ.get("JIRA_MAX_COMMENTS_PER_ISSUE") or "0").strip() or 0)
-    except ValueError:
-        return 0
-
-
-def fetch_jira_issue_all_comments(
-    issue_key: str,
-    attachment_index: dict[str, dict] | None = None,
-) -> list[dict[str, Any]]:
-    """GET /rest/api/3/issue/{key}/comment with pagination."""
-    base = jira_base_url()
-    cap = jira_max_comments_per_issue()
-    out: list[dict[str, Any]] = []
-    start = 0
-    page_size = 100
-    safe_key = urllib.parse.quote(issue_key, safe="")
-    while True:
-        q = urllib.parse.urlencode({"startAt": str(start), "maxResults": str(page_size)})
-        url = f"{base}/rest/api/3/issue/{safe_key}/comment?{q}"
-        req = urllib.request.Request(url)
-        req.add_header("Authorization", jira_auth_header())
-        req.add_header("Accept", "application/json")
-        try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            detail = e.read().decode("utf-8", errors="replace")
-            sys.exit(f"Jira API (comments) HTTP {e.code}: {detail[:500]}")
-        except urllib.error.URLError as e:
-            sys.exit(f"Jira request (comments) failed: {e}")
-        batch = data.get("comments") or []
-        for c in batch:
-            if not isinstance(c, dict):
-                continue
-            out.append(jira_comment_to_item(c, attachment_index=attachment_index))
-            if cap > 0 and len(out) >= cap:
-                return out[:cap]
-        if not batch:
-            break
-        start += len(batch)
-        total = data.get("total")
-        if total is not None and start >= int(total):
-            break
-    return out
-
-
 def extract_repository_from_issue_fields(fields: dict[str, Any]) -> str | None:
     """First non-empty repository string from configured Jira fields."""
     for fid in jira_repository_field_ids():
@@ -233,7 +159,7 @@ def extract_repository_from_issue_fields(fields: dict[str, Any]) -> str | None:
 
 
 def jira_issue_api_field_names() -> list[str]:
-    base = ["summary", "status", "issuetype", "description", "attachment"]
+    base = ["summary", "status", "issuetype"]
     extra = jira_repository_field_ids()
     seen = set(base)
     out = list(base)
@@ -250,17 +176,11 @@ def jira_issue_to_task(issue: dict, base: str) -> dict:
     fields = issue.get("fields") or {}
     summary = (fields.get("summary") or "").strip() or "(no summary)"
     status_name = (fields.get("status") or {}).get("name") or ""
-    iss = fields.get("issuetype") or {}
-    type_name = iss.get("name") or ""
+    st = fields.get("issuetype") or {}
+    type_name = st.get("name") or ""
     browse = jira_browse_url(base, key)
-    att_list = jira_fields_attachments_normalize(fields.get("attachment"))
-    att_index = {a["id"]: a for a in att_list} if att_list else None
-    description = jira_field_description_to_plaintext(
-        fields.get("description"), attachment_index=att_index
-    )
-    if not description:
-        desc_parts = [p for p in (status_name, type_name) if p]
-        description = " · ".join(desc_parts) if desc_parts else None
+    desc_parts = [p for p in (status_name, type_name) if p]
+    description = " · ".join(desc_parts) if desc_parts else None
     repository = extract_repository_from_issue_fields(fields)
     out: dict[str, Any] = {
         "id": key,
@@ -270,12 +190,8 @@ def jira_issue_to_task(issue: dict, base: str) -> dict:
         "browse_url": browse,
         "jira_key": key,
     }
-    if att_list:
-        out["attachments"] = att_list
     if repository:
         out["repository"] = repository
-    status_s = (status_name or "").strip()
-    out["status"] = status_s if status_s else None
     deployed = is_deployed_from_jira_status(status_name)
     if deployed is not None:
         out["is_deployed"] = deployed
@@ -300,14 +216,7 @@ def fetch_jira_issue_by_key(issue_key: str) -> dict:
         sys.exit(f"Jira API HTTP {e.code}: {detail[:500]}")
     except urllib.error.URLError as e:
         sys.exit(f"Jira request failed: {e}")
-    task = jira_issue_to_task(body, base)
-    k = (task.get("jira_key") or task.get("id") or issue_key or "").strip()
-    if k:
-        att_idx = _attachment_index_from_task(task)
-        comments = fetch_jira_issue_all_comments(k, attachment_index=att_idx)
-        if comments:
-            task["comments"] = comments
-    return task
+    return jira_issue_to_task(body, base)
 
 
 def fetch_jira_issues(jql: str, max_results: int) -> list[dict]:
@@ -380,12 +289,6 @@ def task_to_json_shape(t: dict) -> dict:
         out["repository"] = t.get("repository")
     if t.get("is_deployed") is not None:
         out["is_deployed"] = t["is_deployed"]
-    if "status" in t:
-        out["status"] = t.get("status")
-    if "comments" in t:
-        out["comments"] = t.get("comments")
-    if "attachments" in t:
-        out["attachments"] = t.get("attachments")
     return out
 
 
@@ -414,14 +317,9 @@ def main() -> None:
         help="After selection, print only the command string (if any)",
     )
     p.add_argument(
-        "--write-service-context",
+        "--no-workspace-context",
         action="store_true",
-        help="Also write .cursor/context/service-context.json (normally use resolve-service after align-branch)",
-    )
-    p.add_argument(
-        "--no-service-context",
-        action="store_true",
-        help="Deprecated; ignored. Service context is no longer written by pick-task by default.",
+        help="Do not write .cursor/context/workspace-context.json",
     )
     args = p.parse_args()
 
@@ -437,37 +335,20 @@ def main() -> None:
             sys.exit("Jira returned no issues for this JQL. Adjust JIRA_JQL or use --jql.")
 
     if args.json:
-        if len(tasks) == 1 and not args.id:
-            t0 = tasks[0]
-            k0 = (t0.get("jira_key") or t0.get("id") or "").strip()
-            if k0 and "comments" not in t0:
-                idx0 = _attachment_index_from_task(t0)
-                c0 = fetch_jira_issue_all_comments(k0, attachment_index=idx0)
-                if c0:
-                    tasks = [{**t0, "comments": c0}]
         out = [task_to_json_shape(t) for t in tasks]
         print(json.dumps({"tasks": out}, indent=2))
         return
 
-    if args.no_service_context:
-        print(
-            "Warning: --no-service-context is deprecated; service context is no longer written by pick-task. "
-            "Use: python3 .cursor/tools/resolve-service.py (after align-branch). This flag is ignored.",
-            file=sys.stderr,
-        )
-
-    def refresh_service_context() -> None:
-        if not args.write_service_context:
+    def refresh_workspace_context() -> None:
+        if args.no_workspace_context:
             return
         try:
             cwd = Path.cwd()
-            out = write_service_context(cwd)
+            out = write_workspace_context(cwd)
             rel = out.relative_to(cwd.resolve())
-            print(f"Wrote service context: {rel}", file=sys.stderr)
-        except ServiceContextUnresolvedError as e:
-            print(f"Warning: could not write service-context.json: {e}", file=sys.stderr)
+            print(f"Wrote workspace context: {rel}", file=sys.stderr)
         except (OSError, ValueError) as e:
-            print(f"Warning: could not write service-context.json: {e}", file=sys.stderr)
+            print(f"Warning: could not write workspace-context.json: {e}", file=sys.stderr)
 
     if args.pick is not None:
         if args.pick < 1 or args.pick > len(tasks):
@@ -480,15 +361,7 @@ def main() -> None:
     else:
         chosen = pick_interactive(tasks)
 
-    if not args.id:
-        k = (chosen.get("jira_key") or chosen.get("id") or "").strip()
-        if k and "comments" not in chosen:
-            aidx = _attachment_index_from_task(chosen)
-            comments = fetch_jira_issue_all_comments(k, attachment_index=aidx)
-            if comments:
-                chosen = {**chosen, "comments": comments}
-
-    refresh_service_context()
+    refresh_workspace_context()
 
     cmd = chosen.get("command")
     if args.print_command:

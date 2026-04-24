@@ -110,33 +110,6 @@ def normalize_task(obj: dict) -> dict:
         out["repository"] = obj.get("repository")
     if obj.get("is_deployed") is not None:
         out["is_deployed"] = bool(obj["is_deployed"])
-    if "status" in obj:
-        s = obj.get("status")
-        if s is None or (isinstance(s, str) and not s.strip()):
-            out["status"] = None
-        elif isinstance(s, str):
-            out["status"] = s.strip()
-        else:
-            out["status"] = s
-    if "comments" in obj:
-        raw = obj.get("comments")
-        if raw is None:
-            out["comments"] = None
-        elif isinstance(raw, list):
-            out["comments"] = [
-                dict(c) if isinstance(c, dict) else c
-                for c in raw
-            ]
-        else:
-            out["comments"] = raw
-    if "attachments" in obj:
-        ar = obj.get("attachments")
-        if ar is None:
-            out["attachments"] = None
-        elif isinstance(ar, list):
-            out["attachments"] = [dict(c) if isinstance(c, dict) else c for c in ar]
-        else:
-            out["attachments"] = ar
     return out
 
 

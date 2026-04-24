@@ -9,9 +9,32 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any
 
-from .dotenv import try_load_dotenv
+
+def try_load_dotenv() -> None:
+    """Load ./.env if present; does not override existing environment variables."""
+    path = Path.cwd() / ".env"
+    if not path.is_file():
+        return
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    for line in content.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        val = val.strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in ""'":
+            val = val[1:-1]
+        os.environ[key] = val
+
 
 def jira_base_url() -> str:
     u = (os.environ.get("JIRA_INSTANCE_URL") or "").strip().rstrip("/")
@@ -45,145 +68,6 @@ def open_ticket_command(url: str) -> str:
     return f"xdg-open {shlex.quote(url)}"
 
 
-def jira_mime_to_kind(mime: str) -> str:
-    m = (mime or "").lower().strip()
-    if m.startswith("image/"):
-        return "image"
-    if m.startswith("video/"):
-        return "video"
-    if m.startswith("audio/"):
-        return "audio"
-    return "file"
-
-
-def jira_fields_attachments_normalize(raw: object) -> list[dict[str, Any]]:
-    """Normalize Jira `fields.attachment` into a list of plain dicts (ids as strings)."""
-    if not isinstance(raw, list) or not raw:
-        return []
-    out: list[dict[str, Any]] = []
-    for a in raw:
-        if not isinstance(a, dict):
-            continue
-        mid = a.get("id")
-        if mid is None:
-            continue
-        mid_s = str(mid)
-        mime = (a.get("mimeType") or "") or ""
-        c_url = a.get("content")
-        t_url = a.get("thumbnail")
-        out.append(
-            {
-                "id": mid_s,
-                "filename": (a.get("filename") or "") or "",
-                "mimeType": mime,
-                "size": a.get("size"),
-                "content_url": c_url if isinstance(c_url, str) else None,
-                "thumbnail_url": t_url if isinstance(t_url, str) else None,
-                "kind": jira_mime_to_kind(mime),
-            }
-        )
-    return out
-
-
-def jira_field_description_to_plaintext(
-    raw: object,
-    *,
-    attachment_index: dict[str, dict] | None = None,
-) -> str | None:
-    """Jira API v3 description/comment is often Atlassian Document Format (ADF). Optional attachment_index maps Jira media node ids to attachment dicts (filename, kind, content_url)."""
-    if raw is None:
-        return None
-    if isinstance(raw, str):
-        t = raw.strip()
-        return t or None
-    if isinstance(raw, dict):
-        return jira_adf_to_plaintext(raw, attachment_index=attachment_index)
-    return None
-
-
-def jira_adf_to_plaintext(
-    adf: dict,
-    attachment_index: dict[str, dict] | None = None,
-) -> str | None:
-    """Extract plain text from an ADF document, including image/video/file placeholders for media nodes."""
-
-    def _media_line(attrs: dict) -> str:
-        mid = str((attrs or {}).get("id") or "").strip()
-        alt = ((attrs or {}).get("alt") or "").strip() if isinstance(attrs, dict) else ""
-        mtype = ((attrs or {}).get("type") or "").strip() if isinstance(attrs, dict) else ""
-        if mid and attachment_index and mid in attachment_index:
-            a = attachment_index[mid]
-            fn = (a.get("filename") or "file") or "file"
-            k = a.get("kind") or "file"
-            c_url = a.get("content_url")
-            # kind is image|video|audio|file
-            line = f"[{k} attachment: {fn} (id={mid})]"
-            if c_url and isinstance(c_url, str) and c_url.strip():
-                line = f"{line} {c_url.strip()}"
-            if a.get("thumbnail_url"):
-                th = a["thumbnail_url"]
-                if isinstance(th, str) and th.strip():
-                    line = f"{line} [thumbnail: {th.strip()}]"
-            return line
-        if mid:
-            extra = f", {mtype}" if mtype else ""
-            aextra = f", alt={alt!r}" if alt else ""
-            return f"[image/video/file attachment id={mid}{extra}{aextra}]"
-        if alt:
-            return f"[media: {alt}]"
-        return "[media]"
-
-    def walk(node: object) -> list[str]:
-        if not isinstance(node, dict):
-            return []
-        ntype = node.get("type")
-        if ntype == "text":
-            tx = node.get("text")
-            if isinstance(tx, str) and tx:
-                return [tx.replace("\u00a0", " ")]
-            return []
-        if ntype == "hardBreak":
-            return ["\n"]
-        if ntype == "media" or ntype == "file":
-            attrs = node.get("attrs") or {}
-            return [_media_line(attrs if isinstance(attrs, dict) else {})]
-        if ntype == "emoji":
-            attrs = node.get("attrs") or {}
-            short = (attrs.get("shortName") or attrs.get("text") or "") if isinstance(attrs, dict) else ""
-            if isinstance(short, str) and short:
-                return [f":{short}:" if not short.startswith(":") else short]
-            return ["[emoji]"]
-        if ntype == "mention":
-            attrs = node.get("attrs") or {}
-            t = (attrs.get("text") or attrs.get("label") or "") if isinstance(attrs, dict) else ""
-            if isinstance(t, str) and t.strip():
-                return [f"@{t.strip()}" if not t.strip().startswith("@") else t.strip()]
-            return ["@mention"]
-        if ntype == "inlineCard" or ntype == "blockCard":
-            attrs = node.get("attrs") or {}
-            url = (attrs.get("url") or attrs.get("data") or "") if isinstance(attrs, dict) else ""
-            if isinstance(url, str) and url.strip():
-                return [url.strip()]
-            return [f"[{ntype or 'card'}]"]
-        out2: list[str] = []
-        for c in node.get("content") or ():
-            out2.extend(walk(c))
-        return out2
-
-    if not isinstance(adf, dict):
-        return None
-    if adf.get("type") == "doc" and isinstance(adf.get("content"), list):
-        blocks: list[str] = []
-        for block in adf["content"]:
-            t = "".join(walk(block)).strip()
-            if t:
-                blocks.append(t)
-        res = "\n\n".join(blocks) if blocks else ""
-        return res if res else None
-    res2 = "".join(walk(adf)).strip()
-    return res2 or None
-
-
 def jira_issue_to_task(issue: dict, base: str) -> dict:
     """Map a Jira issue JSON object (search or GET issue) to our task shape."""
     key = issue.get("key") or ""
@@ -193,15 +77,9 @@ def jira_issue_to_task(issue: dict, base: str) -> dict:
     st = fields.get("issuetype") or {}
     type_name = st.get("name") or ""
     browse = jira_browse_url(base, key)
-    att_list = jira_fields_attachments_normalize(fields.get("attachment"))
-    att_index = {a["id"]: a for a in att_list} if att_list else None
-    description = jira_field_description_to_plaintext(
-        fields.get("description"), attachment_index=att_index
-    )
-    if not description:
-        desc_parts = [p for p in (status_name, type_name) if p]
-        description = " · ".join(desc_parts) if desc_parts else None
-    out: dict[str, Any] = {
+    desc_parts = [p for p in (status_name, type_name) if p]
+    description = " · ".join(desc_parts) if desc_parts else None
+    return {
         "id": key,
         "label": f"{key}: {summary}",
         "description": description,
@@ -209,15 +87,12 @@ def jira_issue_to_task(issue: dict, base: str) -> dict:
         "browse_url": browse,
         "jira_key": key,
     }
-    if att_list:
-        out["attachments"] = att_list
-    return out
 
 
 def fetch_jira_issue_by_key(issue_key: str) -> dict:
     """GET /rest/api/3/issue/{key} — use for --id so keys need not appear in JQL results."""
     base = jira_base_url()
-    params = urllib.parse.urlencode({"fields": "summary,status,issuetype,description,attachment"})
+    params = urllib.parse.urlencode({"fields": "summary,status,issuetype"})
     safe_key = urllib.parse.quote(issue_key, safe="")
     url = f"{base}/rest/api/3/issue/{safe_key}?{params}"
     req = urllib.request.Request(url)
@@ -241,7 +116,7 @@ def fetch_jira_issues(jql: str, max_results: int) -> list[dict]:
         ("jql", jql),
         ("maxResults", str(max_results)),
     ]
-    for field in ("summary", "status", "issuetype", "description", "attachment"):
+    for field in ("summary", "status", "issuetype"):
         query_parts.append(("fields", field))
     params = urllib.parse.urlencode(query_parts)
     url = f"{base}/rest/api/3/search/jql?{params}"
