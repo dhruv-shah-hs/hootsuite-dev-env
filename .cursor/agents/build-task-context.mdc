@@ -113,6 +113,8 @@ Do **not** hide uncertainty: if the ticket is ambiguous, list **assumptions** an
 
 ## Chat output (agents)
 
-Keep the intro line short and **name the plan type from `task.status`** (e.g. *QA plan for **&lt;JIRA-KEY&gt;** — &lt;service&gt;*, *PR review plan for …*). The body follows the **Output** section for that type. On failure (missing file, no service path), one short paragraph with what is missing and how to fix it.
+**Exception (full output):** Among **hootsuite-dev-env** task agents, **this** one is where the user expects the **complete** structured plan (sections in **Output: plan format**). The intro line is still short and **names the plan type from `task.status`** (e.g. *QA plan for **&lt;JIRA-KEY&gt;** — &lt;service&gt;*); the **body** follows the **Output** section for that type. **resolve-task**, **align-branch**, **resolve-service**, **start-service**, and **task-context-builder** should keep user-visible chat **minimal**; they do not duplicate this plan unless asked.
+
+On failure (missing file, no service path), one short paragraph with what is missing and how to fix it.
 
 Do **not** claim the implementation is done unless you actually applied patches; this agent is **plan-first** unless the user redefines the scope in chat.

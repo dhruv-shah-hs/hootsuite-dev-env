@@ -43,7 +43,7 @@ model: composer-2-fast
 ## Handoff from other agents
 
 - **task-context-builder** §1 step 8 — when the user chooses **Run service**, the parent flow may **invoke this agent** so start logic stays in one place.
-- **`pick-task.py`** — after an interactive pick, calls **`.cursor/tools/start-service.py`** (`maybe_prompt_run_service_interactive`): first whether to show the start flow, then whether the user will run the command **themselves** (wording of the printed one-liner). In **chat**, use this agent or **task-context-builder** §1 step 8. You can run **`python3 .cursor/tools/start-service.py`** alone from dev-env root for the same TTY prompts when **`service-context.json`** exists.
+- **`pick-task.py` + `save-task-context`** — produce **`current-task.local.json`**; they do **not** start the service. **`python3 .cursor/tools/start-service.py`** (`maybe_prompt_run_service_interactive`) is a separate TTY tool: it asks whether to show the start flow, then whether the user will run the command **themselves** (wording of the printed one-liner). In **chat**, use this agent or **task-context-builder** §1 step 8. Run it from dev-env root when **`service-context.json`** exists (or after **`resolve-service`** / **align-branch** as needed).
 
 ---
 
@@ -51,3 +51,9 @@ model: composer-2-fast
 
 - Do not kill unrelated processes; do not expose secrets from **`.env`** in chat.
 - If a service is **already listening** on the expected port, say so and **skip** a duplicate start unless the user wants a restart.
+
+---
+
+## Chat output (agents)
+
+**Minimal:** one short block—running state or the printed command, then port/URL and debug-attach line if present. **Do not** restate this entire agent doc, list numbered workflow steps, paste **`service-context.json`**, or add a “What’s next” essay. Long-form task planning belongs in **build-task-context**, not here.

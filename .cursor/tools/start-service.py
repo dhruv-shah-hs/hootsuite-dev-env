@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
 """
-TTY helper: after a successful interactive pick-task, optionally ask whether to show the
-local service start command, then whether you will run that command yourself (wording
-tailored for self-run vs paste/background).
+TTY helper: from `hootsuite-dev-env` root, optionally prompt whether to show the local
+`primary_commands.run` command, then whether you will run that command yourself (wording
+tailored for self-run vs paste/background). Uses `.cursor/context/service-context.json` when
+present (see `resolve_service` / `align-branch` to refresh it).
 
-Environment:
-  PICK_TASK_NO_RUN_SERVICE_PROMPT  Set to 1/true/yes to skip the prompt.
+Run this after `pick-task` + `save-task-context` when you want the interactive flow; it is
+not invoked by `pick-task`.
 
-Skipped when stdout is not a TTY (e.g. pick-task piped to save-task-context) so JSON
-consumers only see task JSON on stdout.
+Environment (any skips the prompt when set to 1/true/yes):
+  START_SERVICE_NO_PROMPT
+  PICK_TASK_NO_RUN_SERVICE_PROMPT  (legacy name; same behavior)
+
+Skipped when stdout or stdin is not a TTY (e.g. automation) or when skipped via env.
 
 Examples:
-  python3 .cursor/tools/start-service.py   # same as maybe_prompt_run_service_interactive()
+  python3 .cursor/tools/start-service.py
 """
 
 from __future__ import annotations
@@ -26,6 +30,13 @@ if str(_CURSOR_DIR) not in sys.path:
     sys.path.insert(0, str(_CURSOR_DIR))
 
 from lib.service_context import service_context_path  # noqa: E402
+
+
+def _skip_prompt_via_env() -> bool:
+    for key in ("START_SERVICE_NO_PROMPT", "PICK_TASK_NO_RUN_SERVICE_PROMPT"):
+        if os.environ.get(key, "").strip().lower() in ("1", "true", "yes"):
+            return True
+    return False
 
 
 def resolve_run_command(cwd: Path | None = None) -> str:
@@ -47,13 +58,10 @@ def resolve_run_command(cwd: Path | None = None) -> str:
 
 def maybe_prompt_run_service_interactive(cwd: Path | None = None) -> None:
     """
-    After emitting task JSON to stdout, optionally ask (TTY only) whether to show the run command,
+    In an interactive terminal from dev-env root, optionally ask whether to show the run command,
     then whether the user will run it themselves (so the hint text matches intent).
-
-    Skipped when stdout is not a TTY (e.g. `pick-task | save-task-context`) so JSON stays the only
-    stdout payload for the consumer.
     """
-    if os.environ.get("PICK_TASK_NO_RUN_SERVICE_PROMPT", "").strip().lower() in ("1", "true", "yes"):
+    if _skip_prompt_via_env():
         return
     if not (sys.stdout.isatty() and sys.stdin.isatty()):
         return

@@ -37,4 +37,4 @@ python3 .cursor/tools/resolve-service.py
 
 ## Chat output (agents)
 
-Keep replies **short**. On success, confirm in **one line** (issue context optional) that service context is refreshed. Do not paste the full JSON unless the user asked.
+**Minimal:** on success, **one line** that `service-context.json` (and launch, if any) is refreshed; optional Jira key only if it helps. **Do not** paste JSON, list Makefile targets, or add troubleshooting tips unless the run failed. Long-form planning is **build-task-context**, not this agent.

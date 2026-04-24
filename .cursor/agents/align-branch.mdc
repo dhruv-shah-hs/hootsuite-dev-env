@@ -78,11 +78,11 @@ Inspect **`planned_action`**: `would_checkout`, `would_prompt_new_branch`, or `w
 
 ## Completion message
 
-Keep chat replies **minimal**. **Do not** include a **“What ran”** section, command transcripts, bullet lists of steps, or optional tips unless the user asked or there is a **blocking** error.
+**Minimal (strict):** **one line** on success or **one short** failure reason—no “What ran”, no command transcripts, no JSON except when the user must copy something to fix a gate. **Do not** re-explain the workspace model or the whole flow.
 
 When branch alignment **succeeded** and **`current-task.local.json`** was updated, use **one line** only, for example:
 
 **Ready to develop** — `<branch>` (`<ISSUE-KEY>`) · `<service repo path>`. **Next** — run **resolve-service** to refresh `service-context.json` when you need the agent context pack.
 
-If the user **cancelled** branch creation or checkout, or **`Mismatch in repo`** occurred, **do not** claim alignment; give a **short** blocking reason (and current branch only if useful).
+If the user **cancelled** branch creation or checkout, or **`Mismatch in repo`** occurred, **do not** claim alignment; give a **short** blocking reason (and current branch only if useful). Detailed plans belong in **build-task-context**, not here.
 

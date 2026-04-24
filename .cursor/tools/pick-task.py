@@ -13,8 +13,6 @@ Optional:
   JIRA_REPOSITORY_FIELDS  Comma-separated Jira field ids (e.g. customfield_12345) whose
                           values populate task.repository for align-branch verification.
                           Omit to leave repository unset unless you edit task JSON.
-  PICK_TASK_NO_RUN_SERVICE_PROMPT  Set to 1 to skip the optional start-service TTY prompts
-                          after a successful interactive pick (stdout must be a TTY and not piped).
 
 If ./.env exists in the current working directory, it is loaded (keys already set
 in the environment are not overwritten).
@@ -27,6 +25,9 @@ Examples:
   ./pick-task --id PROJ-123             # fetch that issue directly (GET /issue/{key})
   python3 .cursor/tools/pick-task.py --id PROJ-123 | python3 .cursor/tools/save-task-context.py --stdin   # persist
 
+To optionally prompt whether to show/run the local service command (TTY), run
+`python3 .cursor/tools/start-service.py` after you have saved context (see `.cursor/agents/start-service.mdc`).
+
 When task.is_deployed is true (Jira Done), pick-task prompts on TTY before printing JSON (unless
 CURSOR_SKIP_DEPLOYED_CONFIRM=1).
 
@@ -38,14 +39,15 @@ Jira `attachment` field is requested for each issue: `task.attachments` lists fi
 
 To refresh `.cursor/context/service-context.json`, use `python3 .cursor/tools/resolve-service.py`
 (typically after `align-branch`).
-For a dedicated chat workflow to start the service after context is ready, see `.cursor/agents/start-service.mdc`.
+
+This script only lists/fetches from Jira and prints task JSON. Persist with `save-task-context.py`
+(stdin). Service start prompts live in `start-service.py` (see `.cursor/agents/start-service.mdc`).
 """
 
 from __future__ import annotations
 
 import argparse
 import base64
-import importlib.util
 import json
 import os
 import shlex
@@ -70,28 +72,6 @@ from lib.jira import (  # noqa: E402
     jira_fields_attachments_normalize,
 )
 from lib.dotenv import try_load_dotenv  # noqa: E402
-
-_START_SERVICE_PROMPT_FN: object = False  # False = not loaded yet; None = load failed
-
-
-def _call_maybe_prompt_run_service_interactive() -> None:
-    """Delegate to `.cursor/tools/start-service.py` (hyphenated path; loaded via importlib)."""
-    global _START_SERVICE_PROMPT_FN
-    if _START_SERVICE_PROMPT_FN is False:
-        path = Path(__file__).resolve().parent / "start-service.py"
-        spec = importlib.util.spec_from_file_location("_cursor_tools_start_service", path)
-        if spec is None or spec.loader is None:
-            _START_SERVICE_PROMPT_FN = None
-        else:
-            mod = importlib.util.module_from_spec(spec)
-            try:
-                spec.loader.exec_module(mod)
-                _START_SERVICE_PROMPT_FN = getattr(mod, "maybe_prompt_run_service_interactive", None)
-            except Exception:
-                _START_SERVICE_PROMPT_FN = None
-    fn = _START_SERVICE_PROMPT_FN
-    if callable(fn):
-        fn()
 
 
 def jira_base_url() -> str:
@@ -493,7 +473,6 @@ def main() -> None:
 
     confirm_continue_if_deployed_complete(chosen, program="pick-task")
     print(json.dumps(chosen, indent=2))
-    _call_maybe_prompt_run_service_interactive()
 
 
 if __name__ == "__main__":

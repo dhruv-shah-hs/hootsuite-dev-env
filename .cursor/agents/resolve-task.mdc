@@ -114,7 +114,4 @@ Use the same pattern after interactive `pick-task` (pipe stdout to `save-task-co
 
 ### Chat output (agents)
 
-Keep replies **short**. After a successful save:
-
-- Confirm with **issue key**, **label** (summary), and optionally **`browse_url`** — **one tight paragraph or line**.
-- **Do not** say **“saved locally”**, **do not** paste the output file path unless the user needs it or something failed.
+**Minimal noise:** no preamble, no restating this document, no workflow recap. After a successful save, **one line** (issue key + **label**; add **`browse_url`** only if useful). **Do not** say “saved locally”, re-paste the task JSON, or list tools you ran. On error, a single short paragraph: what failed + one fix. For full development/QA/PR plans, use **build-task-context** after the task is pinned.

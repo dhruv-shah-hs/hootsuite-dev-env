@@ -11,6 +11,10 @@ You turn a **selected task** and the **current repository** into one concise **c
 
 **First action when no task is pinned:** Do **not** tell the user to run Python in the terminal to list or choose Jira issues. **You** run `pick-task.py` and **you** show the clickable issue list (AskQuestion). See **§1 Mandatory (chat)** below. After they pick and you persist, **continue in the same response** with the **context pack** (§3), then **branch checkout guidance** (§2): run `checkout-jira-branch.py --dry-run-json`, summarize match vs current branch, and **AskQuestion** (checkout / create branch / skip), then **AskQuestion** (or two questions) for **run the local service**: include **Skip**, **Print command only — I will run it myself in Terminal** (emit `primary_commands.run` + port/debug hints only), and **Run in background** (agent shell per **start-service**). Do not stop at “task saved”, the pack alone, or branch-only unless they opted out of service start.
 
+## Chat output (agents) — minimal except the pack
+
+**Reduce noise:** Do not restate this full agent in chat, do not preface with long “here is what I will do” intros, and do not add a “summary of steps taken” after **AskQuestion** or tool runs. **The required** user-visible work is: **§3 context pack** (tight, one to two screens), the **branch dry-run + AskQuestion** (§1 step 7), and the **run-service AskQuestion** (§1 step 8)—nothing else. **For the full development / PR / QA *plan* document,** use **build-task-context**; do not duplicate that depth here as extra prose.
+
 ## Principles
 
 - Prefer **facts from tools** (task JSON, git, search, manifests) over guesses.
@@ -71,7 +75,7 @@ When the user wants to pick a task, start this agent without a pinned issue, or 
 
 ### Optional: terminal-only picking (human, TTY)
 
-If the user **explicitly** wants to use the terminal `>` prompt instead of AskQuestion: they run **`python3 .cursor/tools/pick-task.py`** (no `--json`) in **Terminal → New Terminal** from repo root, enter a **1-based line number** at `>`, then pipe stdout to `save-task-context.py --stdin`. After a **non-piped** interactive pick, `pick-task.py` invokes **`.cursor/tools/start-service.py`**, which may ask **`Run the local service now? [y/N]`** then **`Will you run this start command yourself in your terminal? [Y/n]`** on stderr and print **`primary_commands.run`** with wording for self-run vs other-terminal/background (skipped when stdout is piped or `PICK_TASK_NO_RUN_SERVICE_PROMPT=1`). Agent-run shells do not reliably provide stdin to `input()`; do not steer them there by default.
+If the user **explicitly** wants to use the terminal `>` prompt instead of AskQuestion: they run **`python3 .cursor/tools/pick-task.py`** (no `--json`) in **Terminal → New Terminal** from repo root, enter a **1-based line number** at `>`, then pipe stdout to `save-task-context.py --stdin`. For the optional local-service TTY prompts, they run **`python3 .cursor/tools/start-service.py`** separately from dev-env root after context is saved (and **`service-context.json`** exists as needed); that script may ask **`Run the local service now? [y/N]`** then **`Will you run this start command yourself in your terminal? [Y/n]`** on stderr and print **`primary_commands.run`** with wording for self-run vs other-terminal/background (skipped when not a TTY or when `START_SERVICE_NO_PROMPT=1` / legacy `PICK_TASK_NO_RUN_SERVICE_PROMPT=1`). Agent-run shells do not reliably provide stdin to `input()`; do not steer them there by default.
 
 ### Non-interactive / automation
 
@@ -132,11 +136,7 @@ Agents must not depend on `input()` inside `checkout-jira-branch.py`.
 
 ### Completion message
 
-When the task is resolved and the working branch matches the Jira issue (or a new branch was created as above), end this phase with a clear line such as:
-
-**Ready to develop in interactive mode** — branch `<name>` aligned with `<ISSUE-KEY>`.
-
-If the user **cancelled** branch creation/checkout (`would_prompt_new_branch`), do **not** claim alignment; summarize the task and current branch without implying a Jira-named branch is checked out.
+**Minimal line** when branch step completes (align-branch agent owns the stricter one-liner; here avoid duplicating a second essay). Example only if needed: **Ready to develop** — branch `<name>`, `<ISSUE-KEY>`. If the user **cancelled** creation/checkout, **do not** claim alignment; one short sentence of fact only.
 
 ## 3) Build task context (context pack)
 
