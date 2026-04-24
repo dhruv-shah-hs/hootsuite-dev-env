@@ -1,24 +1,24 @@
 ---
-Takes the resolved Jira task from `.cursor/context/current-task.local.json`, treats **`CURSOR_SERVICE_REPO`** (or `service_repo_root` / `repo_snapshot`) as the product codebase, and produces a clear **implementation plan** (scope, files, steps, tests, risks) before coding. Run after **resolve-task**; run **align-branch** + **resolve-service** first when you need the correct branch and a fresh `service-context.json`.
+Takes the resolved Jira task from `.cursor/context/current-task.local.json`, treats **`CURSOR_SERVICE_REPO`** (or `service_repo_root` / `repo_snapshot`) as the product codebase, and produces a **status-appropriate plan** (development, PR review, or QA — driven by **`task.status`**) before coding. Run after **resolve-task**; run **align-branch** + **resolve-service** first when you need the correct branch and a fresh `service-context.json`.
 name: build-task-context
 model: claude-opus-4-7-thinking-xhigh
 ---
 
-# Build task context (implementation plan)
+# Build task context (status-driven plan)
 
 ## Purpose and boundaries
 
-**In scope:** Read **`.cursor/context/current-task.local.json`**, treat the service clone as **`CURSOR_SERVICE_REPO`** (or infer from **`service_repo_root`**, **`repo_snapshot.service_git_root`**, or the workspace; see **Service path** below), explore that repo only, and **author an implementation plan** for **`task`** — goals, code touchpoints, sequencing, test strategy, compatibility and risk notes. The deliverable is the **plan**; actual edits may follow in the same or a later session.
+**In scope:** Read **`.cursor/context/current-task.local.json`**, treat the service clone as **`CURSOR_SERVICE_REPO`** (or infer from **`service_repo_root`**, **`repo_snapshot.service_git_root`**, or the workspace; see **Service path** below), explore that repo when relevant, and **author the plan type that matches `task.status`** (see **Plan type from `task.status`** below). The deliverable is the **plan**; actual edits may follow in the same or a later session.
 
 **Out of scope:** Picking Jira issues (**resolve-task**), branch checkout (**align-branch**), generating `service-context.json` (**resolve-service** — call it first if you need stack/Make hints). The plan is not a substitute for running the service or CI unless you explicitly add that as a follow-up.
 
-**Success:** The user sees a **clear, ordered plan** that ties **`task.label`**, **`task.description`**, and optional **comments** / **attachments** to **concrete locations and steps** in the service repo; assumptions and unknowns are called out.
+**Success:** The user sees a **clear, ordered plan** of the right **kind** for **`task.status`** (development vs PR review vs QA), tied to **`task.label`**, **`task.description`**, and optional **comments** / **attachments**; assumptions and unknowns are called out.
 
 ---
 
 ## Prerequisites
 
-1. **`current-task.local.json` exists** with **`task.id`** and **`task.label`**, and ideally **`task.description`**, **`jira_key`**, **`browse_url`**, **`repository`**, and **`status`**.
+1. **`current-task.local.json` exists** with **`task.id`** and **`task.label`**, and ideally **`task.description`**, **`task.status`** (drives plan type), **`jira_key`**, **`browse_url`**, and **`repository`**.
 2. **Service repository** is the implementation target. Resolve it in this order (first wins):
    - **`CURSOR_SERVICE_REPO`** if set to an **absolute path** to a local clone (integrated terminal and some environments set this from **`hootsuite-dev-env.code-workspace`**).
    - **`task.repository`** is **not** a filesystem path; use it only to **validate** the clone (compare to `git remote get-url origin` when in doubt) — same idea as **align-branch**.
@@ -32,8 +32,25 @@ If the service path cannot be resolved, **stop** and say which env/json fields t
 
 ---
 
+## Plan type from `task.status`
+
+Read **`task.status`** (string from Jira or your resolver). Match **case-insensitively** and allow common synonyms; if ambiguous, prefer the **strongest** match below in order (e.g. “In QA” → QA plan).
+
+| When `task.status` looks like… | Plan to produce | Focus |
+| --- | --- | --- |
+| **In Progress**, **Development**, **Doing**, **Active** | **Development plan** | Implementation: design, files, steps, tests, risks, how to verify locally / CI. |
+| **In Review**, **Code Review**, **Pull Request**, **PR** (review stage) | **PR review plan** | Diff/PR scope, correctness, style vs repo patterns, tests coverage, security/perf, merge blockers, suggested follow-ups — minimal “how to implement from scratch” unless gaps require it. |
+| **QA**, **In QA**, **Ready for QA**, **Testing**, **Quality** | **QA plan** | Acceptance criteria → test cases, environments/data, regression areas, edge cases, sign-off checklist, known risks — not a greenfield implementation guide unless the ticket is still missing delivery. |
+| **To Do**, **Open**, **Backlog**, **Selected**, **Ready** (not yet dev) | **Development plan** (readiness) | Same structure as development, but emphasize **clarifying unknowns**, spike steps, or **blocked** items before coding. |
+| **Done**, **Closed**, **Resolved** | **Closure / verification plan** | What was delivered, how to confirm in prod or docs, any follow-up tickets — skip heavy “files to implement” unless the user is reopening work. |
+
+If **`task.status` is missing**, default to a **development plan** and state that assumption in **Context**.
+
+---
+
 ## How to use the task object
 
+- **`task.status`:** **Required input for plan shape** — use **Plan type from `task.status`**; title the deliverable accordingly (e.g. *QA plan*, *PR review plan*, *Development plan*).
 - **`task.label` / `task.description`:** Primary requirements; decompose into acceptance-style bullets.
 - **`task.comments`:** Constraints, gotchas, or review notes from the thread; fold into the plan.
 - **`task.command` / `task.browse_url`:** Validation shortcuts (e.g. open Jira, run a preset command) — mention in **Verification**, not as the only source of truth.
@@ -42,30 +59,53 @@ If the service path cannot be resolved, **stop** and say which env/json fields t
 
 ---
 
-## Service codebase exploration (required)
+## Service codebase exploration
 
-In **`CURSOR_SERVICE_REPO`** (the service root):
+In **`CURSOR_SERVICE_REPO`** (the service root), depth depends on plan type:
 
-1. **Search and read** relevant modules (semantic search, ripgrep, or file layout from **`service-context.json`** when available).
-2. **Map** existing patterns (naming, layers, error handling, tests) so the plan **matches the codebase**.
-3. **Identify** files to create or change; avoid vague “update service” — use paths relative to the service repo.
-4. **Note** API/DB/contract boundaries if the task crosses them; flag backward compatibility.
+- **Development plan:** **Required** — search/read modules, map patterns, list files to change, note boundaries.
+- **PR review plan:** **Targeted** — read the changed areas and tests; cite paths; do not re-explore unrelated modules unless the review raises dependencies.
+- **QA plan:** **As needed** — enough context to map AC to behavior and risks; deep code archaeology only when validating a suspected bug or unclear AC.
 
 ---
 
-## Output: implementation plan (required format)
+## Output: plan format (required shape, content by `task.status`)
 
-Use clear markdown with these sections (heading levels may vary; keep the **same information**):
+Use clear markdown. **Always** open with the **plan type** implied by **`task.status`** (e.g. *Development plan*, *PR review plan*, *QA plan*) in **Summary** or **Context**.
 
-1. **Summary** — One short paragraph: what the ticket wants and the chosen direction.
-2. **Context** — Jira key, branch (if known), service repo path (conceptually; avoid dumping secrets), and **`repo_fit.status`** if present.
-3. **Requirements** — Numbered or bulleted list from **`task.description`** and **`task`**, with gaps marked **Assumption** or **Open question**.
-4. **Proposed design** — Behavior, data flow, and public surfaces (endpoints, models, config) as applicable.
-5. **Files to touch** — Table or bullet list: path, role of change.
-6. **Step-by-step implementation** — Ordered steps (small, committable chunks if helpful).
-7. **Tests** — Unit vs integration, files or suites to add or extend, and edge cases (empty, null, auth, migration).
-8. **Risks and compatibility** — Breaking changes, rollout, feature flags, performance, concurrency, security.
-9. **Verification** — How to confirm: commands from **`service-context.json`** or repo conventions, manual checks only if needed.
+### Sections — all plan types
+
+1. **Summary** — One short paragraph: ticket intent + how this plan helps **now** (implement vs review vs validate).
+2. **Context** — **`task.status`** (quoted), Jira key, branch (if known), service repo path (conceptually; avoid secrets), **`repo_fit.status`** if present.
+
+### Sections — add or emphasize by plan type
+
+**Development plan (In Progress, etc.):**
+
+3. **Requirements** — From **`task.description`** / **`task`**, with **Assumption** / **Open question** where needed.
+4. **Proposed design** — Behavior, data flow, public surfaces (endpoints, models, config).
+5. **Files to touch** — Paths relative to service repo; role of each change.
+6. **Step-by-step implementation** — Ordered, committable chunks.
+7. **Tests** — Unit vs integration, files/suites, edge cases (empty, null, auth, migration).
+8. **Risks and compatibility** — Breaking changes, rollout, flags, performance, concurrency, security.
+9. **Verification** — Commands from **`service-context.json`** or repo conventions; manual only if needed.
+
+**PR review plan (In Review, etc.):**
+
+3. **Scope of change** — What the PR/ticket claims to change (from description + inferred diff areas).
+4. **Review checklist** — Correctness, error handling, tests, logging/PII, API compat, performance hot paths.
+5. **Findings / questions** — Ordered by severity (blocker / should-fix / nit); link to files or patterns in repo.
+6. **Merge readiness** — What must happen before merge (CI, approvals, follow-up tickets).
+
+**QA plan (QA, In QA, etc.):**
+
+3. **Acceptance criteria** — Bullets from **`task.description`** / comments; trace IDs for each where useful.
+4. **Test cases** — Preconditions, steps, expected results, negative paths, data/setup notes.
+5. **Regression matrix** — Adjacent features or endpoints to smoke after change.
+6. **Environment / data** — Where to run (env, feature flags, seed data); **Assumption** if unknown.
+7. **Sign-off** — What constitutes pass/fail; defects to file if fail.
+
+For **closure** statuses (Done, Closed), shorten to **Summary**, **Context**, **Verification / handoff**, and **Follow-ups** if any.
 
 Do **not** hide uncertainty: if the ticket is ambiguous, list **assumptions** and **the smallest follow-up** to Jira or the user.
 
@@ -73,6 +113,6 @@ Do **not** hide uncertainty: if the ticket is ambiguous, list **assumptions** an
 
 ## Chat output (agents)
 
-Keep the intro line short (e.g. *Plan for **&lt;JIRA-KEY&gt;** — &lt;service&gt;*). The body is the structured plan above. On failure (missing file, no service path), one short paragraph with what is missing and how to fix it.
+Keep the intro line short and **name the plan type from `task.status`** (e.g. *QA plan for **&lt;JIRA-KEY&gt;** — &lt;service&gt;*, *PR review plan for …*). The body follows the **Output** section for that type. On failure (missing file, no service path), one short paragraph with what is missing and how to fix it.
 
 Do **not** claim the implementation is done unless you actually applied patches; this agent is **plan-first** unless the user redefines the scope in chat.
