@@ -30,6 +30,9 @@ from pathlib import Path
 _LIB = Path(__file__).resolve().parent.parent / "lib"
 if _LIB.is_dir() and str(_LIB) not in sys.path:
     sys.path.insert(0, str(_LIB))
+_CURSOR_DIR = Path(__file__).resolve().parent.parent
+if str(_CURSOR_DIR) not in sys.path:
+    sys.path.insert(0, str(_CURSOR_DIR))
 from deployed_confirm import confirm_continue_if_deployed_complete  # noqa: E402
 from task_context import task_context_file_path  # noqa: E402
 
