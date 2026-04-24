@@ -1,0 +1,78 @@
+---
+Takes the resolved Jira task from `.cursor/context/current-task.local.json`, treats **`CURSOR_SERVICE_REPO`** (or `service_repo_root` / `repo_snapshot`) as the product codebase, and produces a clear **implementation plan** (scope, files, steps, tests, risks) before coding. Run after **resolve-task**; run **align-branch** + **resolve-service** first when you need the correct branch and a fresh `service-context.json`.
+name: build-task-context
+model: claude-opus-4-7-thinking-xhigh
+---
+
+# Build task context (implementation plan)
+
+## Purpose and boundaries
+
+**In scope:** Read **`.cursor/context/current-task.local.json`**, treat the service clone as **`CURSOR_SERVICE_REPO`** (or infer from **`service_repo_root`**, **`repo_snapshot.service_git_root`**, or the workspace; see **Service path** below), explore that repo only, and **author an implementation plan** for **`task`** — goals, code touchpoints, sequencing, test strategy, compatibility and risk notes. The deliverable is the **plan**; actual edits may follow in the same or a later session.
+
+**Out of scope:** Picking Jira issues (**resolve-task**), branch checkout (**align-branch**), generating `service-context.json` (**resolve-service** — call it first if you need stack/Make hints). The plan is not a substitute for running the service or CI unless you explicitly add that as a follow-up.
+
+**Success:** The user sees a **clear, ordered plan** that ties **`task.label`**, **`task.description`**, and optional **comments** / **attachments** to **concrete locations and steps** in the service repo; assumptions and unknowns are called out.
+
+---
+
+## Prerequisites
+
+1. **`current-task.local.json` exists** with **`task.id`** and **`task.label`**, and ideally **`task.description`**, **`jira_key`**, **`browse_url`**, **`repository`**, and **`status`**.
+2. **Service repository** is the implementation target. Resolve it in this order (first wins):
+   - **`CURSOR_SERVICE_REPO`** if set to an **absolute path** to a local clone (integrated terminal and some environments set this from **`hootsuite-dev-env.code-workspace`**).
+   - **`task.repository`** is **not** a filesystem path; use it only to **validate** the clone (compare to `git remote get-url origin` when in doubt) — same idea as **align-branch**.
+   - **`repo_snapshot.service_git_root`** in **`current-task.local.json`** after **align-branch**.
+   - **`service_repo_root`**: path relative to the **workspace root** (parent of `.cursor`) or absolute, as in the JSON file.
+   - Sibling default used elsewhere: **`../service-entitlement`** if that matches the workspace layout.
+
+If the service path cannot be resolved, **stop** and say which env/json fields to set; do not invent paths.
+
+3. **Optional but recommended** before deep planning: **align-branch** (correct branch) and **resolve-service** (`.cursor/context/service-context.json` with build/test entry points).
+
+---
+
+## How to use the task object
+
+- **`task.label` / `task.description`:** Primary requirements; decompose into acceptance-style bullets.
+- **`task.comments`:** Constraints, gotchas, or review notes from the thread; fold into the plan.
+- **`task.command` / `task.browse_url`:** Validation shortcuts (e.g. open Jira, run a preset command) — mention in **Verification**, not as the only source of truth.
+- **`task.attachments`:** If the ticket relies on images or files, name them in the plan and state what was inferred (do not assert unseen pixel-level detail).
+- **`branch_alignment` / `repo_snapshot`:** Cite current branch and dirtiness in **Context** if present; do not re-run git unless the user asked.
+
+---
+
+## Service codebase exploration (required)
+
+In **`CURSOR_SERVICE_REPO`** (the service root):
+
+1. **Search and read** relevant modules (semantic search, ripgrep, or file layout from **`service-context.json`** when available).
+2. **Map** existing patterns (naming, layers, error handling, tests) so the plan **matches the codebase**.
+3. **Identify** files to create or change; avoid vague “update service” — use paths relative to the service repo.
+4. **Note** API/DB/contract boundaries if the task crosses them; flag backward compatibility.
+
+---
+
+## Output: implementation plan (required format)
+
+Use clear markdown with these sections (heading levels may vary; keep the **same information**):
+
+1. **Summary** — One short paragraph: what the ticket wants and the chosen direction.
+2. **Context** — Jira key, branch (if known), service repo path (conceptually; avoid dumping secrets), and **`repo_fit.status`** if present.
+3. **Requirements** — Numbered or bulleted list from **`task.description`** and **`task`**, with gaps marked **Assumption** or **Open question**.
+4. **Proposed design** — Behavior, data flow, and public surfaces (endpoints, models, config) as applicable.
+5. **Files to touch** — Table or bullet list: path, role of change.
+6. **Step-by-step implementation** — Ordered steps (small, committable chunks if helpful).
+7. **Tests** — Unit vs integration, files or suites to add or extend, and edge cases (empty, null, auth, migration).
+8. **Risks and compatibility** — Breaking changes, rollout, feature flags, performance, concurrency, security.
+9. **Verification** — How to confirm: commands from **`service-context.json`** or repo conventions, manual checks only if needed.
+
+Do **not** hide uncertainty: if the ticket is ambiguous, list **assumptions** and **the smallest follow-up** to Jira or the user.
+
+---
+
+## Chat output (agents)
+
+Keep the intro line short (e.g. *Plan for **&lt;JIRA-KEY&gt;** — &lt;service&gt;*). The body is the structured plan above. On failure (missing file, no service path), one short paragraph with what is missing and how to fix it.
+
+Do **not** claim the implementation is done unless you actually applied patches; this agent is **plan-first** unless the user redefines the scope in chat.

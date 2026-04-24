@@ -1,4 +1,4 @@
-"""Discover sibling `service-entitlement` repo, tech stack, and Makefile targets for workspace-context.json."""
+"""Resolve the product service repo (env, code-workspace, or sibling), then scan tech stack and Make targets for service-context.json."""
 
 from __future__ import annotations
 
@@ -58,10 +58,97 @@ _MAKEFILE_DIRECTIVE = frozenset(
 
 
 def service_entitlement_dir(dev_env_root: Path) -> Path:
-    """Sibling clone `service-entitlement` next to this dev-env repo (see `hootsuite-dev-env.code-workspace`)."""
+    """Default sibling `service-entitlement` next to this dev-env repo; prefer :func:`resolve_service_repo`."""
     return (dev_env_root.resolve().parent / "service-entitlement").resolve()
 
 
+def _is_probably_git_url(value: str) -> bool:
+    t = value.strip()
+    if t.startswith(("https://", "http://", "ssh://")):
+        return True
+    if t.startswith("git@"):
+        return True
+    return False
+
+
+def _service_path_from_code_workspace(dev_env_root: Path) -> Path | None:
+    """
+    If ``hootsuite-dev-env.code-workspace`` exists, resolve the service folder path (VS Code–style;
+    relative paths are relative to the workspace file directory).
+    """
+    ws = dev_env_root / "hootsuite-dev-env.code-workspace"
+    if not ws.is_file():
+        return None
+    try:
+        data = json.loads(ws.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    folders = data.get("folders")
+    if not isinstance(folders, list):
+        return None
+    base = ws.parent.resolve()
+    chosen: dict | None = None
+    for f in folders:
+        if not isinstance(f, dict):
+            continue
+        if f.get("name") == "service-entitlement":
+            chosen = f
+            break
+    if chosen is None:
+        for f in folders:
+            if not isinstance(f, dict):
+                continue
+            n = f.get("name")
+            if n and n != "hootsuite-dev-env":
+                chosen = f
+                break
+    if chosen is None or not chosen.get("path"):
+        return None
+    rel = str(chosen["path"])
+    return (base / rel).resolve()
+
+
+def resolve_service_repo(dev_env_root: Path) -> tuple[Path | None, str, list[str]]:
+    """
+    Locate the product service repository root for context generation.
+
+    Precedence: ``CURSOR_SERVICE_REPO`` (if a valid local path), then
+    ``hootsuite-dev-env.code-workspace`` service folder, else sibling ``../service-entitlement``.
+
+    Returns (path or None if only a URL is set), source tag, and provenance notes.
+    """
+    root = dev_env_root.resolve()
+    notes: list[str] = []
+    raw = (os.environ.get("CURSOR_SERVICE_REPO") or "").strip()
+
+    if raw:
+        if _is_probably_git_url(raw):
+            return (
+                None,
+                "unresolved",
+                [
+                    "CURSOR_SERVICE_REPO looks like a git/HTTPS URL; a local clone path is not yet supported. "
+                    "Set CURSOR_SERVICE_REPO to your local clone path, or unset it to use the code-workspace or sibling default."
+                ],
+            )
+        candidate = Path(os.path.expanduser(raw)).resolve()
+        if candidate.is_dir():
+            return (candidate, "env", notes)
+        notes.append(f"CURSOR_SERVICE_REPO is not a directory ({raw}); trying code-workspace and default.")
+
+    from_ws = _service_path_from_code_workspace(root)
+    if from_ws is not None and from_ws.is_dir():
+        return (from_ws, "code_workspace", notes)
+
+    if from_ws is not None and not from_ws.is_dir():
+        notes.append(f"Code-workspace service path is missing or not a directory: {from_ws}.")
+
+    sibling = service_entitlement_dir(root)
+    return (sibling, "sibling_default", notes)
+
+
+class ServiceContextUnresolvedError(RuntimeError):
+    """Raised when the service repo path cannot be resolved (e.g. URL-only ``CURSOR_SERVICE_REPO``)."""
 def _path_posix_relative_to(base: Path, target: Path) -> str:
     """POSIX path from `base` to `target`, using `..` when the service is a sibling repo."""
     br = base.resolve()
@@ -882,7 +969,7 @@ def merge_vscode_launch_attach(root: Path, doc: dict[str, Any]) -> dict[str, Any
     """
     Upsert a single attach configuration in `.vscode/launch.json` under `root`.
 
-    Returns metadata to store in workspace-context.json, or None if skipped.
+    Returns metadata to store in service-context.json, or None if skipped.
     """
     pair = _vscode_attach_configuration(doc)
     if not pair:
@@ -931,19 +1018,22 @@ def merge_vscode_launch_attach(root: Path, doc: dict[str, Any]) -> dict[str, Any
     }
 
 
-def build_workspace_context(cwd: Path | None = None) -> dict[str, Any]:
+def build_service_context(cwd: Path | None = None) -> dict[str, Any]:
     """
-    Build the workspace-context document (does not write to disk).
+    Build the service-context document (does not write to disk).
 
     `cwd` is the dev-env repository root (defaults to process cwd).
     """
-    root = cwd or Path.cwd()
-    service_base = service_entitlement_dir(root)
+    root = (cwd or Path.cwd()).resolve()
+    service_abs, src, resolve_notes = resolve_service_repo(root)
     generated_at = datetime.now(timezone.utc).isoformat()
 
+    path_meta: dict[str, Any] = {"source": src, "provenance_notes": list(resolve_notes)}
+
     doc: dict[str, Any] = {
-        "$schema": "./schema/workspace-context.schema.json",
+        "$schema": "./schema/service-context.schema.json",
         "generated_at": generated_at,
+        "service_path_resolution": path_meta,
         "service_root": None,
         "makefile": None,
         "tech_stack": {"languages": [], "build_tools": [], "manifests": [], "summary": ""},
@@ -979,17 +1069,32 @@ def build_workspace_context(cwd: Path | None = None) -> dict[str, Any]:
         "notes": [],
     }
 
+    if service_abs is None:
+        for n in resolve_notes:
+            doc["notes"].append(n)
+        doc["tech_stack"]["summary"] = "unknown (service path unresolved)"
+        return doc
+
+    service_base = service_abs
     if not service_base.is_dir():
         doc["notes"].append(
-            "Sibling `service-entitlement` directory is missing; clone it next to this dev-env repo "
-            "(same layout as `hootsuite-dev-env.code-workspace`, folder `../service-entitlement`)."
+            f"Service directory is missing: {service_base}. "
+            "Clone the repository or set CURSOR_SERVICE_REPO to a valid local path."
         )
-        doc["tech_stack"]["summary"] = "unknown (service-entitlement not found)"
+        for n in resolve_notes:
+            if n:
+                doc["notes"].append(n)
+        doc["tech_stack"]["summary"] = "unknown (service directory not found)"
         return doc
 
     makefiles = _find_makefiles(service_base)
     if not makefiles:
-        doc["notes"].append("No Makefile found under service-entitlement (within search depth).")
+        doc["notes"].append(
+            f"No Makefile found under the service root (within search depth): {service_base}."
+        )
+        for n in resolve_notes:
+            if n:
+                doc["notes"].append(n)
         doc["tech_stack"]["summary"] = "unknown (no Makefile)"
         return doc
 
@@ -1033,19 +1138,30 @@ def build_workspace_context(cwd: Path | None = None) -> dict[str, Any]:
         doc["notes"].append(
             "Task keywords did not match any service files; confirm this is the right repo or refine the Jira label."
         )
+    for n in resolve_notes:
+        if n:
+            doc["notes"].append(n)
 
     return doc
 
 
-def workspace_context_path(cwd: Path | None = None) -> Path:
+def service_context_path(cwd: Path | None = None) -> Path:
     root = (cwd or Path.cwd()).resolve()
-    return root / ".cursor" / "context" / "workspace-context.json"
+    return root / ".cursor" / "context" / "service-context.json"
 
 
-def write_workspace_context(cwd: Path | None = None) -> Path:
-    """Write `.cursor/context/workspace-context.json` and update `.vscode/launch.json` attach config."""
+def write_service_context(cwd: Path | None = None) -> Path:
+    """Write `.cursor/context/service-context.json` and update `.vscode/launch.json` attach config."""
     root = (cwd or Path.cwd()).resolve()
-    doc = build_workspace_context(root)
+    doc = build_service_context(root)
+    spr = doc.get("service_path_resolution") or {}
+    if spr.get("source") == "unresolved":
+        notes = spr.get("provenance_notes")
+        if isinstance(notes, list) and notes:
+            msg = " ".join(str(x) for x in notes)
+        else:
+            msg = "Could not resolve service path (e.g. CURSOR_SERVICE_REPO is a URL with no local clone)"
+        raise ServiceContextUnresolvedError(msg)
     launch_meta = merge_vscode_launch_attach(root, doc)
     if launch_meta:
         doc["vscode_launch"] = launch_meta
@@ -1054,7 +1170,7 @@ def write_workspace_context(cwd: Path | None = None) -> Path:
             "No VS Code attach template for this stack; add an attach configuration to .vscode/launch.json manually."
         )
 
-    out = workspace_context_path(root)
+    out = service_context_path(root)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
     return out

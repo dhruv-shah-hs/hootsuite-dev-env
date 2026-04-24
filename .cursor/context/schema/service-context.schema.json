@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://hootsuite.invalid/schemas/workspace-context-v1.json",
-  "title": "Workspace context (sibling service-entitlement + dev commands)",
-  "description": "Written by `.cursor/lib/workspace_context.py` (called from `pick-task.py`). Captures the resolved service repo (`../service-entitlement` next to this dev-env), its tech stack, toolchain pins, git state, and the Makefile commands the agent should prefer.",
+  "$id": "https://hootsuite.invalid/schemas/service-context-v1.json",
+  "title": "Service context (product service + dev commands)",
+  "description": "Written by `.cursor/tools/resolve-service.py` (or `service_context.write_service_context`). Discovers the service via `CURSOR_SERVICE_REPO`, `hootsuite-dev-env.code-workspace`, or sibling `../service-entitlement`, then records tech stack, toolchain pins, git state, and Makefile commands.",
   "type": "object",
   "required": ["generated_at", "tech_stack"],
   "additionalProperties": true,
@@ -15,6 +15,14 @@
       "type": "string",
       "format": "date-time",
       "description": "When this file was last written (ISO 8601, UTC)."
+    },
+    "service_path_resolution": {
+      "type": "object",
+      "description": "How the product service root was resolved: env, code workspace file, or sibling default.",
+      "properties": {
+        "source": { "type": "string" },
+        "provenance_notes": { "type": "array", "items": { "type": "string" } }
+      }
     },
     "service_root": {
       "type": ["string", "null"],
