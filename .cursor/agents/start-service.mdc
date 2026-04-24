@@ -1,0 +1,53 @@
+---
+Starts the local application using `.cursor/task-context/workspace-context.json` (`primary_commands.run`, ports, debug attach hints). Use after **task-context-builder** or **align-branch** when the user wants the service process running locally—not for Jira pick, save-task-context, or branch alignment alone.
+name: start-service
+model: composer-2-fast
+---
+
+# Start local service
+
+## Purpose and boundaries
+
+**In scope:** Load **`.cursor/task-context/workspace-context.json`**, take **`primary_commands.run`** (or the best equivalent entrypoint for this stack), optionally surface **`endpoints`** / **`vscode_launch`**, then either **print** that command for the user to run **themselves** (no shell) or **start** the dev server in a **background** shell from the correct working directory—match what they chose (self-run vs agent-run).
+
+**Out of scope:** **`pick-task.py`**, **`save-task-context.py`**, **`checkout-jira-branch.py`**, full markdown context packs (**task-context-builder**), production or minikube deploys unless the user explicitly asks.
+
+**Success:** The run command is executed (background) or clearly printed; the user knows which **URL/port** to hit and how to **attach a debugger** when the stack is JVM/Node/etc.
+
+**Prerequisite:** **`workspace-context.json`** exists and is fresh enough. If missing or stale, run **`python3 .cursor/tools/refresh-workspace-context.py`** from **`hootsuite-dev-env` repo root** (no Jira), or **`python3 .cursor/tools/pick-task.py --id <KEY>`** after a pick, or use **refresh-workspace-context** / **task-context-builder** workflows.
+
+---
+
+## Workspace layout (same as **align-branch**)
+
+- **`hootsuite-dev-env`** holds **`.cursor/`** and the generated **`workspace-context.json`**.
+- **`primary_commands.run`** is usually a shell line starting with **`cd ../service-entitlement && …`**.
+- When the multi-root **`hootsuite-dev-env.code-workspace`** is open, **`CURSOR_SERVICE_REPO`** may already point at **service-entitlement**; still prefer commands from **`workspace-context.json`** so cwd and flags stay consistent with what **`write_workspace_context`** recorded.
+
+---
+
+## Flow
+
+1. **Working directory:** **`hootsuite-dev-env`** repository root (directory that contains **`.cursor/`**), so relative **`cd ../service-entitlement`** in **`primary_commands.run`** resolves correctly.
+2. **Read** **`.cursor/task-context/workspace-context.json`**:  
+   - **`primary_commands.run`** — primary start command.  
+   - If **`run`** is missing, fall back to **`cd ../service-entitlement && make run`** when **`../service-entitlement`** exists; otherwise stop with a clear error.
+3. **Optional one-liner context for the user:** From the same file, cite **`endpoints.ports`**, **`endpoints.http_examples`**, and **`vscode_launch.debug_attach.hint`** when present (no wall of JSON).
+4. **How to proceed (ask if unclear):** If the user wants **only the command** (they run **`make run`** themselves), print **`primary_commands.run`** and the port/debug hints—**do not** spawn a background process. If they want the agent to start it, continue with step 5.
+5. **Execute (when not print-only):** Run the **`run`** command via the agent’s shell tool with **background** mode (long-running JVM/Node/etc.). Do not block the chat on foreground **`make run`** unless the user explicitly asks for foreground logs in this session.
+6. **Light verification (optional):** After a short pause, a single **`curl`** to **`localhost:<port>`** from **`endpoints`** is enough when HTTP is relevant; treat failure as “still starting” unless the process clearly exited.
+7. **Failure:** If the command exits quickly, show **stderr**; suggest **`make vault-setup-local-dev`**, missing **`.env`**, or **`compile-and-test-service`** only when **`workspace-context.json`** / logs support that hypothesis.
+
+---
+
+## Handoff from other agents
+
+- **task-context-builder** §1 step 8 — when the user chooses **Run service**, the parent flow may **invoke this agent** so start logic stays in one place.
+- **`pick-task.py`** — after an interactive pick, calls **`.cursor/tools/start-service.py`** (`maybe_prompt_run_service_interactive`): first whether to show the start flow, then whether the user will run the command **themselves** (wording of the printed one-liner). In **chat**, use this agent or **task-context-builder** §1 step 8. You can run **`python3 .cursor/tools/start-service.py`** alone from dev-env root for the same TTY prompts when **`workspace-context.json`** exists.
+
+---
+
+## Safety
+
+- Do not kill unrelated processes; do not expose secrets from **`.env`** in chat.
+- If a service is **already listening** on the expected port, say so and **skip** a duplicate start unless the user wants a restart.

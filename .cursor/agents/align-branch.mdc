@@ -38,7 +38,7 @@ Git commands for alignment run in the **service** clone, not necessarily in the 
    - If they differ → **stop** and surface the error **`Mismatch in repo`** (exit code **2** from the tool; agents must not continue as if aligned).  
    - If **`task.repository`** is not set → **skip** enforcement; dry-run JSON will show **`skipped_no_task_repository`** (set **`task.repository`** when you want a hard gate).
 3. **Branch lookup:** Find branches whose names **start with** **`JIRA-KEY_`** (local and `origin/*`).
-4. **No matching branch:** Ask the human for **only the suffix** (interactive terminal). **Disclaimer:** the **full** branch name is **`JIRA-KEY_<suffix>`**; the script prints this before prompting.  
+4. **No matching branch:** The script shows a **proposed** full branch name derived from the Jira summary (`JIRA-KEY_<slug>`), asks **Use this name? [Y/n]**, then either accepts it or prompts for a **custom suffix** only (interactive terminal). **Dry-run JSON** exposes **`proposed_full_branch`** / **`proposed_suffix`** for agents: **AskQuestion** must be **Skip** / **Use proposed branch** (literal **`proposed_full_branch`**) / **Use my own suffix** (then collect suffix only) — three options only, no duplicate “create” variants.  
 5. **One match:** `git checkout` that branch.  
 6. **Several matches:** List branches; user picks by number.  
 7. **Persistence:** After a successful checkout, the script **merges** updates into **`current-task.local.json`** (unless **`--no-write-task-context`**): existing **`branch_alignment`** keys such as **`repository_check`**, **`suffix_validation`**, **`matching_branches`**, and **`planned_action_detail`** from **`save-task-context`** / **`--dry-run-json`** are kept unless superseded; prior **`planned_action`** / **`planned_action_detail`** are also copied to **`dry_run_planned_action`** / **`dry_run_planned_action_detail`** when checkout replaces them. **`repo_snapshot`** is merged shallowly (new git fields overlay prior keys). When the repo check is skipped, **`repo_fit.notes`** is left as-is (e.g. **`null`**) instead of overwriting with canned text.
@@ -68,10 +68,10 @@ Agents must not rely on `input()` in the checkout tool.
 python3 .cursor/tools/checkout-jira-branch.py --dry-run-json
 ```
 
-Inspect **`planned_action`**: `would_checkout`, `would_prompt_new_branch`, or `would_prompt_pick_branch`; also **`repository_check`**, **`matching_branches`**, **`branch_prefix`**, **`suffix_validation`**, **`service_git_root`**.
+Inspect **`planned_action`**: `would_checkout`, `would_prompt_new_branch`, or `would_prompt_pick_branch`; also **`repository_check`**, **`matching_branches`**, **`branch_prefix`**, **`suffix_validation`**, **`service_git_root`**, and when present **`proposed_full_branch`** / **`proposed_suffix`**.
 
-- If **`ok`** is false and **`error`** is **`Mismatch in repo`**: stop and report; do not claim branch alignment.
-- **`would_prompt_new_branch`:** use **AskQuestion** with **Continue** / **Cancel** before collecting the suffix; on continue, collect **suffix** only, then either have the user run git in Terminal or run git with explicit approval and **`git_write`** scope.
+- If **`ok`** is false and **`error`** is **`Mismatch in repo`**: do **not** claim branch alignment via the script, but the JSON still includes **`proposed_full_branch`** / **`branch_prefix`** — keep offering the same three options (Skip / Use proposed branch / Use my own suffix) by running git directly with approved `git_write`. Add a short note on how to clear the gate (`JIRA_REPOSITORY_FIELDS`, `task.repository`, or `CURSOR_REQUIRE_TASK_REPOSITORY=0`).
+- **`would_prompt_new_branch`:** one **AskQuestion**, **three options only**: **Skip** / **Use proposed branch** (option label = literal **`proposed_full_branch`** from JSON; **`KEY_suffix`**) / **Use my own suffix** — when picked, **collect the suffix in the next chat turn and finish `git checkout -b <branch_prefix><suffix>` before any downstream agent (e.g. **start-service**) is invoked**; validate per **`suffix_validation`**. Do not add a fourth “create” option.
 - **`would_checkout` / `would_prompt_pick_branch`:** direct the user to the Terminal script, or checkout with approval and permissions.
 
 ---
