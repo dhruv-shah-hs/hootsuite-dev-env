@@ -25,13 +25,13 @@ _CURSOR_DIR = Path(__file__).resolve().parent.parent
 if str(_CURSOR_DIR) not in sys.path:
     sys.path.insert(0, str(_CURSOR_DIR))
 
-from lib.workspace_context import workspace_context_path  # noqa: E402
+from lib.service_context import service_context_path  # noqa: E402
 
 
 def resolve_run_command(cwd: Path | None = None) -> str:
-    """Best-effort `primary_commands.run` from workspace-context.json, else make run fallback."""
+    """Best-effort `primary_commands.run` from service-context.json, else make run fallback."""
     root = (cwd or Path.cwd()).resolve()
-    ctx_path = workspace_context_path(root)
+    ctx_path = service_context_path(root)
     if ctx_path.is_file():
         try:
             doc = json.loads(ctx_path.read_text(encoding="utf-8"))

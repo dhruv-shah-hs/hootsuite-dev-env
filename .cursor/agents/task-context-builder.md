@@ -18,13 +18,13 @@ You turn a **selected task** and the **current repository** into one concise **c
 - Call out **assumptions** and **open questions** explicitly.
 - Name the **detected stack and entrypoints** briefly (e.g. “Node + pnpm”, “Go module”, “Gradle multi-project”) so the pack transfers across repos.
 
-**Repository scope:** In **`hootsuite-dev-env`**, the committed tree is Cursor agents, Python helpers, and MCP wiring—not a shipping service. A **minimal or stub Jira issue** (for example **ID-5750**) is enough to exercise `pick-task.py`, **`save-task-context.py`**, branch checkout, and this agent end-to-end while you extend the workflow. To refresh **`workspace-context.json` only** (no Jira pin), run **`python3 .cursor/tools/refresh-workspace-context.py`** or invoke the **refresh-workspace-context** agent.
+**Repository scope:** In **`hootsuite-dev-env`**, the committed tree is Cursor agents, Python helpers, and MCP wiring—not a shipping service. A **minimal or stub Jira issue** (for example **ID-5750**) is enough to exercise `pick-task.py`, **`save-task-context.py`**, branch checkout, and this agent end-to-end while you extend the workflow. To refresh **`.cursor/context/service-context.json` only** (no new Jira pick), run **`python3 .cursor/tools/resolve-service.py`** (see **resolve-service** agent) — typically after **align-branch** when the service clone and Makefile matter for the context pack.
 
 **Service code (`service-entitlement`):** The application repo is the **sibling clone** **`service-entitlement`** next to `hootsuite-dev-env` (same layout as `hootsuite-dev-env.code-workspace`, path `../service-entitlement` from this repo root). For **stack detection, tests, run commands, and “likely touch points,”** search and read that repo first, then this repo’s `.cursor/` helpers. If the sibling directory is missing, state that in the context pack and ask whether to clone it or work only in `hootsuite-dev-env`.
 
 ## 1) Resolve the task
 
-Tasks are usually defined in Jira (schema: `.cursor/task-context/tasks.schema.json` if present). The helper script is **`.cursor/tools/pick-task.py`**.
+Tasks are usually defined in Jira (schema: `.cursor/context/schema/tasks.schema.json` if present). The helper script is **`.cursor/tools/pick-task.py`**.
 
 ### Mandatory behavior (this agent in Cursor chat)
 
@@ -45,9 +45,9 @@ When the user wants to pick a task, start this agent without a pinned issue, or 
    python3 .cursor/tools/pick-task.py --id ISSUE-KEY | python3 .cursor/tools/save-task-context.py --stdin
    ```
 
-   That writes **`.cursor/task-context/current-task.local.json`** and refreshes **`workspace-context.json`** (unless the user disabled it). **Do not** delegate this pipe to the user unless they explicitly refuse agent shell access.
+   That writes **`.cursor/context/current-task.local.json`**. It does not write **`service-context.json`**; for stack/Make metadata run **`python3 .cursor/tools/resolve-service.py`** (often right before building the **§3** context pack, or after **align-branch**). **Do not** delegate this pipe to the user unless they explicitly refuse agent shell access.
 
-6. **Immediately after** that pipe succeeds, **build and post the context pack** in this same assistant turn (see **§3**). Read **`current-task.local.json`** (`task`), **`workspace-context.json`**, then do light discovery (git branch/dirty on dev-env and on **`../service-entitlement`** when present, keyword search / semantic search in the service repo from task text). Output the markdown pack with **all required sections** in **§3 — Context pack format**. Skip the pack only if the user clearly asked **only** to save the task or change the pin, with no context work.
+6. **Immediately after** that pipe succeeds, run **`python3 .cursor/tools/resolve-service.py`** when **`.cursor/context/service-context.json`** is missing or you need fresh Makefile/stack data for the pack, then **build and post the context pack** in this same assistant turn (see **§3**). Read **`.cursor/context/current-task.local.json`** (`task`), **`.cursor/context/service-context.json`**, then do light discovery (git branch/dirty on dev-env and on **`../service-entitlement`** when present, keyword search / semantic search in the service repo from task text). Output the markdown pack with **all required sections** in **§3 — Context pack format**. Skip the pack only if the user clearly asked **only** to save the task or change the pin, with no context work.
 
 7. **Branch checkout (§2) — same assistant turn after the pack** (when the user just picked an issue and you emitted §3; skip only if they explicitly said no git / pin-only): Run **`python3 .cursor/tools/checkout-jira-branch.py --dry-run-json`** so the user gets the same **“checkout a branch for this ticket”** prompt they expect. **Git cwd:** Jira branches usually live on **service-entitlement**. If **`CURSOR_SERVICE_REPO`** is set (multi-root workspace terminal env), run the script with **`cwd`** set to that path. Otherwise, from **`hootsuite-dev-env` repo root**, pass **`--git-cwd ../service-entitlement`** when that directory exists; if only the dev-env repo exists, run without `--git-cwd` and explain limits.    Parse **`planned_action`**, **`matching_branches`**, **`branch_prefix`**, **`repository_check`**, and when present **`proposed_full_branch`**. In chat: short summary (current branch vs ticket prefix). Then **AskQuestion** (or equivalent) **by `planned_action`**:
 
@@ -57,7 +57,7 @@ When the user wants to pick a task, start this agent without a pinned issue, or 
 
    For other cases, keep **Skip** available. Do **not** tell the user to “run checkout-jira-branch yourself” as the default; you run dry-run and drive the choice. **Even when `repository_check` failed (e.g. `Mismatch in repo`, missing `task.repository`)**, the dry-run JSON still includes **`proposed_full_branch`** / **`branch_prefix`**. **Surface the same three new-branch options** (Skip / Use proposed branch — runs `git checkout -b <proposed_full_branch>` directly via approved `git_write` / Use my own suffix). **Append a short note** describing how to clear the gate (`JIRA_REPOSITORY_FIELDS`, set `task.repository`, or `CURSOR_REQUIRE_TASK_REPOSITORY=0`) so the script itself works next time. Do **not** offer **Skip — fix env later** as the *only* option.
 
-8. **Run the service (optional)** — only **after step 7 has fully resolved**, including any **suffix follow-up** when the user picked **Use my own suffix** (collect the suffix and run/queue `git checkout -b` first; do **not** ask about starting the service while a branch suffix is still pending). Then **AskQuestion** with at least **Skip**, **Print command only — I will run it myself** (show **`primary_commands.run`** from **`workspace-context.json`**, plus **`endpoints` / `vscode_launch`** hints; **no** background `make run`), and **Run in background** (follow **`.cursor/agents/start-service.mdc`**: background shell, light verify). If the product supports **two** questions in one form, you may ask **(a)** whether to start the service and **(b)** whether they will run the command **on their own** (print-only vs agent-run)—otherwise use the single multi-choice above. Skip entirely if they said **pin-only**, **no servers**, or **CI/automation**.
+8. **Run the service (optional)** — only **after step 7 has fully resolved**, including any **suffix follow-up** when the user picked **Use my own suffix** (collect the suffix and run/queue `git checkout -b` first; do **not** ask about starting the service while a branch suffix is still pending). Then **AskQuestion** with at least **Skip**, **Print command only — I will run it myself** (show **`primary_commands.run`** from **`service-context.json`**, plus **`endpoints` / `vscode_launch`** hints; **no** background `make run`), and **Run in background** (follow **`.cursor/agents/start-service.mdc`**: background shell, light verify). If the product supports **two** questions in one form, you may ask **(a)** whether to start the service and **(b)** whether they will run the command **on their own** (print-only vs agent-run)—otherwise use the single multi-choice above. Skip entirely if they said **pin-only**, **no servers**, or **CI/automation**.
 
 9. If Jira errors (missing env, auth, network), show the error and say what is missing; only then may you suggest they fix `.env` or run a one-off command themselves.
 
@@ -86,7 +86,7 @@ If the task has a **preset command** (`command`), treat it as the primary valida
 
 ### Persist the task (required before branch checkout)
 
-**`.cursor/tools/checkout-jira-branch.py`** does **not** call `pick-task.py`. It reads the resolved task from **`.cursor/task-context/current-task.local.json`** (field **`task`**, schema: `.cursor/task-context/tasks.schema.json` if present). That file is typically **gitignored**; each developer generates it locally.
+**`.cursor/tools/checkout-jira-branch.py`** does **not** call `pick-task.py`. It reads the resolved task from **`.cursor/context/current-task.local.json`** (field **`task`**, schema: `.cursor/context/schema/tasks.schema.json` if present). That file is typically **gitignored**; each developer generates it locally.
 
 **You** persist after a pick using the pipe in **Mandatory §** (or equivalent two-step run). If **`current-task.local.json`** already contains the correct **`task`** for this session, you may read it and skip re-fetching unless the user asks to refresh.
 
@@ -144,8 +144,8 @@ If the user **cancelled** branch creation/checkout (`would_prompt_new_branch`), 
 
 **Inputs (read these):**
 
-- **`.cursor/task-context/current-task.local.json`** — `task` (`id`, `label`, `description`, `browse_url`, `jira_key`, `command`, …).
-- **`.cursor/task-context/workspace-context.json`** (schema: `.cursor/task-context/workspace-context.schema.json`) — prefer facts from here over guessing:
+- **`.cursor/context/current-task.local.json`** — `task` (`id`, `label`, `description`, `browse_url`, `jira_key`, `command`, …).
+- **`.cursor/context/service-context.json`** (schema: `.cursor/context/schema/service-context.schema.json`) — prefer facts from here over guessing:
 
   - **`service_root` / `makefile` / `tech_stack` / `toolchain`** — resolved service path (usually `../service-entitlement`), languages/build tools, pinned runtime versions.
   - **`service_git`** — branch/SHA/remote of the service repo (separate from `hootsuite-dev-env`).
@@ -165,9 +165,9 @@ Produce **one** markdown document in the chat with these sections:
 
 1. **Task** — `id`, `label`, optional `description`; `browse_url` / `jira_key`; if `command` is set, show as a shell one-liner.
 2. **Repo snapshot** — current branch; clean vs dirty (dev-env and service repo when both exist).
-3. **Project context (detected)** — one short paragraph: stack, main build/test entrypoints **from this workspace** (cite `workspace-context.json` / manifests).
+3. **Project context (detected)** — one short paragraph: stack, main build/test entrypoints **from this repo** (cite `service-context.json` / manifests).
 4. **Likely touch points** — bullets or table: **path** → one-line reason (from search + task keywords).
-5. **Commands to run** — prefer **`primary_commands`** / **`tests.runners`** from `workspace-context.json`; otherwise concrete commands from manifests.
+5. **Commands to run** — prefer **`primary_commands`** / **`tests.runners`** from `service-context.json`; otherwise concrete commands from manifests.
 6. **Risks and edge cases** — only plausibly relevant categories.
 7. **Open questions** — gaps or ambiguous scope.
 8. **Next files to read (ordered)** — 3–8 paths, most important first.
