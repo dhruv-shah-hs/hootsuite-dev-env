@@ -31,7 +31,7 @@ def try_load_dotenv() -> None:
         if not key or key in os.environ:
             continue
         val = val.strip()
-        if len(val) >= 2 and val[0] == val[-1] and val[0] in ""'":
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
             val = val[1:-1]
         os.environ[key] = val
 
