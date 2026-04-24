@@ -319,7 +319,7 @@ def main() -> None:
     p.add_argument(
         "--no-workspace-context",
         action="store_true",
-        help="Do not write .cursor/task-context/workspace-context.json",
+        help="Do not write .cursor/context/workspace-context.json",
     )
     args = p.parse_args()
 

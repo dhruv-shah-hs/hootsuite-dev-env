@@ -1,5 +1,5 @@
 ---
-Aligns the **service repository** git branch with the resolved Jira issue in `.cursor/task-context/current-task.local.json` using `.cursor/tools/checkout-jira-branch.py`. Run after **resolve-task** when the working tree should be on a `ISSUE-KEY_*` branch. Persists **`branch_alignment`** (and related fields) back into **`current-task.local.json`** after a successful checkout.
+Aligns the **service repository** git branch with the resolved Jira issue in `.cursor/context/current-task.local.json` using `.cursor/tools/checkout-jira-branch.py`. Run after **resolve-task** when the working tree should be on a `ISSUE-KEY_*` branch. Persists **`branch_alignment`** (and related fields) back into **`current-task.local.json`** after a successful checkout.
 name: align-branch
 model: composer-2-fast
 ---
@@ -8,7 +8,7 @@ model: composer-2-fast
 
 ## Purpose and boundaries
 
-**In scope:** Verify the workspace service clone matches **`task.repository`** (when set), locate or create a branch whose name starts with **`JIRA-KEY_`**, show the checked-out branch, and merge **branch alignment** details into **`.cursor/task-context/current-task.local.json`**.
+**In scope:** Verify the workspace service clone matches **`task.repository`** (when set), locate or create a branch whose name starts with **`JIRA-KEY_`**, show the checked-out branch, and merge **branch alignment** details into **`.cursor/context/current-task.local.json`**.
 
 **Out of scope:** Picking or saving the Jira task — use **resolve-task** first. Building the context pack or tests — use **task-context-builder** or other agents.
 
@@ -18,7 +18,7 @@ model: composer-2-fast
 
 A typical Cursor **workspace** contains:
 
-1. **`.cursor/`** — agents, tools, and **`.cursor/task-context/current-task.local.json`** (where the resolved **`task`** lives).
+1. **`.cursor/`** — agents, tools, and **`.cursor/context/current-task.local.json`** (where the resolved **`task`** lives).
 2. **Service repository** — the git clone where product code changes are made (often a **sibling** folder of `.cursor/`’s parent, e.g. `workspace/my-service/` next to `workspace/.cursor/`).
 
 Git commands for alignment run in the **service** clone, not necessarily in the directory that only holds `.cursor/` configuration. Tell the tooling which clone to use via one of:
@@ -33,7 +33,7 @@ Git commands for alignment run in the **service** clone, not necessarily in the 
 
 ## Flow (high level)
 
-1. **Prerequisite:** **`resolve-task`** has produced **`.cursor/task-context/current-task.local.json`** with a **`task`** (including **`jira_key`** / **`id`**).
+1. **Prerequisite:** **`resolve-task`** has produced **`.cursor/context/current-task.local.json`** with a **`task`** (including **`jira_key`** / **`id`**).
 2. **Repository check:** If **`task.repository`** is set (expected origin URL or comparable string), compare it (normalized) to **`git remote get-url origin`** in the service clone.  
    - If they differ → **stop** and surface the error **`Mismatch in repo`** (exit code **2** from the tool; agents must not continue as if aligned).  
    - If **`task.repository`** is not set → **skip** enforcement; dry-run JSON will show **`skipped_no_task_repository`** (set **`task.repository`** when you want a hard gate).

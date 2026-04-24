@@ -1,22 +1,20 @@
 #!/usr/bin/env python3
 """
-Persist the resolved task from pick-task plus optional Git/Jira branch alignment.
+Persist the resolved task from pick-task to JSON on disk.
 
-Uses the same task shape as pick-task stdout (single JSON object). Optionally runs
-`python3 .cursor/tools/checkout-jira-branch.py --dry-run-json` after writing the task
-so the dry-run reads the same task (requires CURSOR_SERVICE_REPO / service_repo_root
-when the git clone is not cwd).
+Uses the same task shape as pick-task stdout (single JSON object).
 
-Default output: .cursor/task-context/current-task.local.json (override with --out).
+Default output: .cursor/context/current-task.local.json (override with --out).
 That path is gitignored — copy or commit a redacted snapshot elsewhere if needed.
 
 Examples:
   python3 .cursor/tools/pick-task --id ENG-123 | python3 .cursor/tools/save-task-context --stdin
   python3 .cursor/tools/save-task-context --from-id ENG-123
-  python3 .cursor/tools/save-task-context --from-id ENG-123 --no-branch
 
 If task.is_deployed is true (Jira Done), prompts on an interactive terminal before writing;
 set CURSOR_SKIP_DEPLOYED_CONFIRM=1 to proceed without prompting (CI/automation).
+
+branch_alignment is left null here; checkout-jira-branch / align-branch may populate it later.
 """
 
 from __future__ import annotations
@@ -33,6 +31,7 @@ _LIB = Path(__file__).resolve().parent.parent / "lib"
 if _LIB.is_dir() and str(_LIB) not in sys.path:
     sys.path.insert(0, str(_LIB))
 from deployed_confirm import confirm_continue_if_deployed_complete  # noqa: E402
+from task_context import task_context_file_path  # noqa: E402
 
 
 def script_dir() -> Path:
@@ -40,7 +39,7 @@ def script_dir() -> Path:
 
 
 def default_out_path() -> Path:
-    return (Path.cwd() / ".cursor/task-context/current-task.local.json").resolve()
+    return task_context_file_path(Path.cwd()).resolve()
 
 
 def pick_task_script() -> Path:
@@ -69,34 +68,6 @@ def run_pick_task(pick: int | None, issue_id: str | None) -> dict:
         return json.loads(proc.stdout)
     except json.JSONDecodeError as e:
         sys.exit(f"Could not parse pick-task output as JSON: {e}")
-
-
-def run_checkout_dry_run(out_path: Path) -> dict | None:
-    """Run checkout-jira-branch --dry-run-json; context file must already contain `task`."""
-    exe = script_dir() / "checkout-jira-branch.py"
-    if not exe.is_file():
-        return {"ok": False, "error": f"Missing {exe}"}
-    service = os.environ.get("CURSOR_SERVICE_REPO", "").strip()
-    kw: dict = {
-        "capture_output": True,
-        "text": True,
-    }
-    if service:
-        kw["cwd"] = service
-    proc = subprocess.run(
-        [sys.executable, str(exe), "--dry-run-json"],
-        **kw,
-    )
-    raw = (proc.stdout or "").strip()
-    try:
-        payload = json.loads(raw) if raw else {}
-    except json.JSONDecodeError:
-        return {
-            "ok": False,
-            "error": "checkout-jira-branch did not return JSON",
-            "stderr": (proc.stderr or "")[:500],
-        }
-    return payload
 
 
 def _git_prefix() -> list[str]:
@@ -173,11 +144,6 @@ def main() -> None:
         metavar="PATH",
         help=f"Output file (default: {default_out_path()})",
     )
-    p.add_argument(
-        "--no-branch",
-        action="store_true",
-        help="Do not run checkout-jira-branch --dry-run-json",
-    )
     args = p.parse_args()
 
     if args.stdin:
@@ -189,13 +155,11 @@ def main() -> None:
 
     confirm_continue_if_deployed_complete(task, program="save-task-context")
 
-    jira_key = (task.get("jira_key") or task.get("id") or "").strip()
-
     out_path = args.out.resolve() if args.out else default_out_path()
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     doc: dict = {
-        "$schema": "./tasks.schema.json",
+        "$schema": "./schema/tasks.schema.json",
         "resolved_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "generated_by": "save-task-context",
         "task": task,
@@ -218,20 +182,6 @@ def main() -> None:
                 doc["service_repo_root"] = sr.strip()
         except (OSError, json.JSONDecodeError):
             pass
-
-    need_dry = (not args.no_branch) and bool(jira_key)
-
-    if need_dry:
-        doc["branch_alignment"] = None
-        out_path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
-        doc["branch_alignment"] = run_checkout_dry_run(out_path)
-    elif (not args.no_branch) and not jira_key:
-        doc["branch_alignment"] = {"ok": False, "error": "task has no jira_key for branch_alignment"}
-
-    doc["repo_snapshot"] = {
-        "git_branch": git_branch(),
-        "git_dirty_hint": git_dirty(),
-    }
 
     out_path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
     print(str(out_path))

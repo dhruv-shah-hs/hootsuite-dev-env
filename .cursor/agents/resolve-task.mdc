@@ -1,5 +1,5 @@
 ---
-Picks a Jira issue via `pick-task`, persists it to `.cursor/task-context/current-task.local.json` with `save-task-context`. If `is_deployed` is true (Done), asks in chat (AskQuestion) whether to continue before saving. Use when you need a resolved task on disk before branch checkout or context building (agent, CI, or onboarding).
+Picks a Jira issue via `pick-task`, persists it with `save-task-context` to `.cursor/context/current-task.local.json`. If `is_deployed` is true (Done), asks in chat (AskQuestion) whether to continue before saving. This agent **only** selects and persists the task — not branch checkout or alignment.
 name: resolve-task
 model: composer-2-fast
 ---
@@ -8,19 +8,15 @@ model: composer-2-fast
 
 ## Purpose and boundaries
 
-**In scope:** Resolve exactly one task from Jira using `.cursor/tools/pick-task`, then persist it with `.cursor/tools/save-task-context` so `.cursor/task-context/current-task.local.json` exists with a normalized **`task`** object (see `.cursor/task-context/tasks.schema.json`).
+**In scope:** Resolve exactly one task from Jira using `.cursor/tools/pick-task`, then persist it with `.cursor/tools/save-task-context` so `.cursor/context/current-task.local.json` exists with a normalized **`task`** object (see `.cursor/context/schema/tasks.schema.json`).
 
-**Out of scope:** Git checkout or branch creation (use the **checkout Jira branch** sub-agent next). Building a markdown context pack, repo discovery, tests, and PR review (use **task-context-builder** or other agents).
-
-**Success:** `save-task-context` prints the output path (default: `.cursor/task-context/current-task.local.json`); the file contains `task` with at least `id` and `label`, plus optional `jira_key`, `description`, `browse_url`, `command`, and optionally **`repository`** (expected Git origin URL/slug for **align-branch** verification).
-
-By default, `save-task-context` writes the task, then runs `checkout-jira-branch.py --dry-run-json` (from **`CURSOR_SERVICE_REPO`**/`cwd` when set) and stores **`branch_alignment`** in the same file (preview only; no git mutation). Use `--no-branch` if you want the file without that dry-run.
+**Success:** `save-task-context` completes; the output file (default: `.cursor/context/current-task.local.json`) contains `task` with at least `id` and `label`, plus optional `jira_key`, `description`, `browse_url`, `command`, and optionally **`repository`** (for downstream tooling that reads this file).
 
 ---
 
 ## Resolve the task
 
-Tasks are usually defined in Jira (schema: `.cursor/task-context/tasks.schema.json` if present). The helper script is `.cursor/tools/pick-task`.
+Tasks are usually defined in Jira (schema: `.cursor/context/schema/tasks.schema.json` if present). The helper script is `.cursor/tools/pick-task`.
 
 **Default:** Prefer **interactive** task selection when a human is driving the workflow; use non-interactive flags only when stdin is not available (agent, CI) or the user already supplied a key.
 
@@ -76,7 +72,7 @@ Do **not** rely on blocking stdin.
 | Shortest path by issue key (fetch + persist in one step) | `python3 .cursor/tools/save-task-context --from-id ISSUE-KEY` |
 | Choose by issue key (task JSON only, then save yourself) | `python3 .cursor/tools/pick-task --id ISSUE-KEY` |
 | Choose by row (same order as `--json`) | `python3 .cursor/tools/pick-task --pick N` |
-| After task is persisted | **Next:** use the **align-branch** sub-agent to align git with `current-task.local.json` |
+| After task is persisted | **Stop here** for this agent. |
 
 Extract at minimum: `id`, `label`, `description`. Also capture when present: `browse_url`, `jira_key`, `command`, **`is_deployed`** (when `true`, ticket is Done — triggers AskQuestion before persist).
 
@@ -84,12 +80,12 @@ If the task has a **preset command** (`command`), treat it as the primary valida
 
 ### Done tickets — ask before continuing
 
-When **`task.is_deployed`** is **`true`** (Jira is **Done**; see `.cursor/task-context/tasks.schema.json`), treat the issue as possibly already complete and deployed. **Before** running `save-task-context` or any follow-on (e.g. align-branch), **ask the user in chat using AskQuestion**:
+When **`task.is_deployed`** is **`true`** (Jira is **Done**; see `.cursor/context/schema/tasks.schema.json`), treat the issue as possibly already complete and deployed. **Before** running `save-task-context`, **ask the user in chat using AskQuestion**:
 
-- **Prompt:** e.g. *This ticket is Done (`is_deployed: true`). Do you want to continue and resolve it into `.cursor/task-context/current-task.local.json` anyway?*
+- **Prompt:** e.g. *This ticket is Done (`is_deployed: true`). Do you want to continue and resolve it into `.cursor/context/current-task.local.json` anyway?*
 - **Options:** at least **Continue** and **Stop** (labels must make the outcome obvious).
 
-If the user chooses **Stop** (or equivalent): **do not** run `save-task-context`, do not overwrite `current-task.local.json`, and do not proceed to branch alignment for this ticket; acknowledge and stop.
+If the user chooses **Stop** (or equivalent): **do not** run `save-task-context`, do not overwrite `current-task.local.json`, and stop; acknowledge and stop.
 
 If the user chooses **Continue**: proceed with **Persist the task** below as usual.
 
@@ -100,7 +96,7 @@ If **`is_deployed`** is absent or **`false`**, skip this question.
 
 ### Persist the task
 
-**`.cursor/tools/checkout-jira-branch.py`** does **not** call `pick-task`. It reads the resolved task from **`.cursor/task-context/current-task.local.json`** (field **`task`**). That file is typically **gitignored**; each developer generates it locally.
+The resolved task file (**`.cursor/context/current-task.local.json`**, field **`task`**) is typically **gitignored**; each developer generates it locally.
 
 After you have task JSON from `pick-task` (stdout), persist it—for example:
 
@@ -114,8 +110,6 @@ Equivalent without piping:
 python3 .cursor/tools/save-task-context --from-id ISSUE-KEY
 ```
 
-Use `--no-branch` on `save-task-context` if you want to skip the checkout dry-run metadata.
-
 Use the same pattern after interactive `pick-task` (pipe stdout to `save-task-context --stdin`). **Agents** can rely on **already materialized** `current-task.local.json` or instruct the user to run pick-task + save once.
 
 ### Chat output (agents)
@@ -124,5 +118,3 @@ Keep replies **short**. After a successful save:
 
 - Confirm with **issue key**, **label** (summary), and optionally **`browse_url`** — **one tight paragraph or line**.
 - **Do not** say **“saved locally”**, **do not** paste the output file path unless the user needs it or something failed.
-- **Do not** summarize **`branch_alignment`**, **`repo_snapshot`**, or dry-run JSON unless **`branch_alignment.ok`** is **false** or the user must fix something (e.g. **`Mismatch in repo`**, missing **`task.repository`**).
-

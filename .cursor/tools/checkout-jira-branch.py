@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Read the selected task from `.cursor/task-context/current-task.local.json`
+Read the selected task from `.cursor/context/current-task.local.json`
 (save-task-context / pick-task workflow), then check out a git branch named
   JIRA-TICKET-ID_<suffix>
 If no branch exists with that prefix, prompt for <suffix> and create the branch.
@@ -13,6 +13,11 @@ Environment:
   CURSOR_REQUIRE_TASK_REPOSITORY   When unset or 1 (default), task.repository is required for
                                    alignment; missing or wrong origin yields "Mismatch in repo".
                                    Set to 0 to restore optional repo checks (legacy).
+  CURSOR_SERVICE_REPO              Absolute path to the service clone. If unset or blank, alignment
+                                   also accepts service_repo_root in current-task.local.json or
+                                   --git-cwd. Falling back to the shell cwd without one of these is
+                                   disabled (exit 3) so the dev-env repo is not mistaken for the service.
+                                   Set CURSOR_ALLOW_ALIGN_BRANCH_CWD=1 only to allow cwd fallback.
 
 Examples:
   python3 .cursor/tools/checkout-jira-branch.py
@@ -51,47 +56,61 @@ from lib.git import (  # noqa: E402
     run_git,
     working_tree_dirty,
 )
+from lib.task_context import (  # noqa: E402
+    extract_task_from_document,
+    load_task_context_document,
+    task_context_path,
+)
 
 
 EXIT_MISMATCH_REPO = 2
+EXIT_NO_SERVICE_REPO = 3
 
 
-def task_context_path() -> Path:
-    return _CURSOR_DIR / "task-context" / "current-task.local.json"
-
-
-def load_task_context() -> dict[str, Any]:
-    path = task_context_path()
-    if not path.is_file():
-        sys.exit(
-            f"Missing task context file: {path} (run save-task-context after pick-task)"
-        )
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as e:
-        sys.exit(f"Invalid JSON in {path}: {e}")
-
-
-def load_task_data(raw: dict[str, Any]) -> dict[str, Any]:
-    task = raw.get("task")
-    if not isinstance(task, dict):
-        sys.exit(f"{task_context_path()} has no 'task' object")
-    return task
+def _validate_existing_dir(label: str, path: Path) -> Path:
+    if not path.exists():
+        sys.exit(f"{label}: path does not exist: {path}")
+    if not path.is_dir():
+        sys.exit(f"{label}: not a directory: {path}")
+    return path
 
 
 def resolve_git_root(cli_git_cwd: Path | None, doc: dict[str, Any]) -> Path:
+    """Resolve the service clone root; exit if unset when cwd fallback is not allowed."""
     if cli_git_cwd is not None:
-        return cli_git_cwd.expanduser().resolve()
+        return _validate_existing_dir("--git-cwd", cli_git_cwd.expanduser().resolve())
+
     env = os.environ.get("CURSOR_SERVICE_REPO", "").strip()
     if env:
-        return Path(env).expanduser().resolve()
+        return _validate_existing_dir(
+            "CURSOR_SERVICE_REPO",
+            Path(env).expanduser().resolve(),
+        )
+
     raw = doc.get("service_repo_root")
     if isinstance(raw, str) and raw.strip():
         p = Path(raw.strip())
-        if p.is_absolute():
-            return p.resolve()
-        return (_WORKSPACE_ROOT / p).resolve()
-    return Path.cwd().resolve()
+        resolved = p.resolve() if p.is_absolute() else (_WORKSPACE_ROOT / p).resolve()
+        return _validate_existing_dir("service_repo_root in task context", resolved)
+
+    allow_cwd = os.environ.get("CURSOR_ALLOW_ALIGN_BRANCH_CWD", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    if allow_cwd:
+        return Path.cwd().resolve()
+
+    sys.stderr.write(
+        "branch alignment: no service git root configured.\n"
+        "Set CURSOR_SERVICE_REPO to an absolute path to your service clone,\n"
+        "or set service_repo_root in .cursor/context/current-task.local.json,\n"
+        "or pass --git-cwd DIR.\n"
+        "(The previous default used the shell working directory and often picked the wrong repo;\n"
+        "set CURSOR_ALLOW_ALIGN_BRANCH_CWD=1 only if you intentionally run from inside the service clone.)\n",
+    )
+    sys.exit(EXIT_NO_SERVICE_REPO)
 
 
 def branch_alignment_requires_task_repository() -> bool:
@@ -274,11 +293,14 @@ def merge_branch_alignment_into_context(
     repository_check: dict[str, Any],
 ) -> None:
     path = task_context_path()
-    doc: dict[str, Any]
     try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as e:
+        doc = load_task_context_document(path)
+    except FileNotFoundError as e:
+        sys.exit(str(e))
+    except json.JSONDecodeError as e:
         sys.exit(f"Cannot update {path}: {e}")
+    except ValueError as e:
+        sys.exit(str(e))
 
     prev_ba = doc.get("branch_alignment")
     if not isinstance(prev_ba, dict):
@@ -351,8 +373,18 @@ def main() -> None:
     args = p.parse_args()
     write_task_context = not args.no_write_task_context
 
-    raw_doc = load_task_context()
-    task = load_task_data(raw_doc)
+    try:
+        raw_doc = load_task_context_document()
+    except FileNotFoundError as e:
+        sys.exit(str(e))
+    except json.JSONDecodeError as e:
+        sys.exit(f"Invalid JSON in {task_context_path()}: {e}")
+    except ValueError as e:
+        sys.exit(str(e))
+    try:
+        task = extract_task_from_document(raw_doc, path_for_errors=task_context_path())
+    except ValueError as e:
+        sys.exit(str(e))
     repo_root = resolve_git_root(args.git_cwd, raw_doc)
     repository_check = verify_repository_alignment(task, repo_root)
 

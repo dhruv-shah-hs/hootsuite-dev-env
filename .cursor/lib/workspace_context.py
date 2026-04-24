@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from lib.task_context import read_current_task_for_workspace
+
 # Stable VS Code launch configuration names (used to replace prior generator runs).
 _LAUNCH_ATTACH_JAVA_NAME = "Attach: service (JDWP)"
 _LAUNCH_ATTACH_NODE_NAME = "Attach: service (Node)"
@@ -544,18 +546,6 @@ def _detect_docs(service_root: Path) -> list[dict[str, Any]]:
     return out
 
 
-def _read_current_task(root: Path) -> dict[str, Any] | None:
-    path = root / ".cursor" / "task-context" / "current-task.local.json"
-    if not path.is_file():
-        return None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    task = data.get("task") if isinstance(data, dict) else None
-    return task if isinstance(task, dict) else None
-
-
 _FIT_STOPWORDS = frozenset(
     {
         "the",
@@ -952,7 +942,7 @@ def build_workspace_context(cwd: Path | None = None) -> dict[str, Any]:
     generated_at = datetime.now(timezone.utc).isoformat()
 
     doc: dict[str, Any] = {
-        "$schema": "./workspace-context.schema.json",
+        "$schema": "./schema/workspace-context.schema.json",
         "generated_at": generated_at,
         "service_root": None,
         "makefile": None,
@@ -1031,7 +1021,7 @@ def build_workspace_context(cwd: Path | None = None) -> dict[str, Any]:
     doc["tests"] = _detect_tests(service_root, names, service_rel, doc["tech_stack"])
     doc["config_surface"] = _detect_config_and_secrets(service_root, names, service_rel)
     doc["docs_index"] = _detect_docs(service_root)
-    doc["task_repo_fit"] = _compute_task_repo_fit(service_root, _read_current_task(root))
+    doc["task_repo_fit"] = _compute_task_repo_fit(service_root, read_current_task_for_workspace(root))
 
     if not names:
         doc["notes"].append("Makefile present but no targets parsed (unusual syntax).")
@@ -1049,11 +1039,11 @@ def build_workspace_context(cwd: Path | None = None) -> dict[str, Any]:
 
 def workspace_context_path(cwd: Path | None = None) -> Path:
     root = (cwd or Path.cwd()).resolve()
-    return root / ".cursor" / "task-context" / "workspace-context.json"
+    return root / ".cursor" / "context" / "workspace-context.json"
 
 
 def write_workspace_context(cwd: Path | None = None) -> Path:
-    """Write `.cursor/task-context/workspace-context.json` and update `.vscode/launch.json` attach config."""
+    """Write `.cursor/context/workspace-context.json` and update `.vscode/launch.json` attach config."""
     root = (cwd or Path.cwd()).resolve()
     doc = build_workspace_context(root)
     launch_meta = merge_vscode_launch_attach(root, doc)
