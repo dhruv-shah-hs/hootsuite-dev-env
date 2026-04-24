@@ -37,7 +37,7 @@ fetched for --id, a single JQL result, and interactive / --pick selection.
 Jira `attachment` field is requested for each issue: `task.attachments` lists files with `kind` (image/video/audio/file) and Jira `content` URLs. Inlined media in the description and comments is turned into bracketed lines that reference the same files when the attachment id matches the ADF `media` node.
 
 To refresh `.cursor/context/service-context.json`, use `python3 .cursor/tools/resolve-service.py`
-(typically after `align-branch`), or pass `--write-service-context` to pick-task to opt in.
+(typically after `align-branch`).
 For a dedicated chat workflow to start the service after context is ready, see `.cursor/agents/start-service.mdc`.
 """
 
@@ -69,7 +69,6 @@ from lib.jira import (  # noqa: E402
     jira_field_description_to_plaintext,
     jira_fields_attachments_normalize,
 )
-from lib.service_context import ServiceContextUnresolvedError, write_service_context  # noqa: E402
 from lib.dotenv import try_load_dotenv  # noqa: E402
 
 _START_SERVICE_PROMPT_FN: object = False  # False = not loaded yet; None = load failed
@@ -439,16 +438,6 @@ def main() -> None:
         action="store_true",
         help="After selection, print only the command string (if any)",
     )
-    p.add_argument(
-        "--write-service-context",
-        action="store_true",
-        help="Also write .cursor/context/service-context.json (normally use resolve-service after align-branch)",
-    )
-    p.add_argument(
-        "--no-service-context",
-        action="store_true",
-        help="Deprecated; ignored. Service context is no longer written by pick-task by default.",
-    )
     args = p.parse_args()
 
     if args.id:
@@ -475,26 +464,6 @@ def main() -> None:
         print(json.dumps({"tasks": out}, indent=2))
         return
 
-    if args.no_service_context:
-        print(
-            "Warning: --no-service-context is deprecated; service context is no longer written by pick-task. "
-            "Use: python3 .cursor/tools/resolve-service.py (after align-branch). This flag is ignored.",
-            file=sys.stderr,
-        )
-
-    def refresh_service_context() -> None:
-        if not args.write_service_context:
-            return
-        try:
-            cwd = Path.cwd()
-            out = write_service_context(cwd)
-            rel = out.relative_to(cwd.resolve())
-            print(f"Wrote service context: {rel}", file=sys.stderr)
-        except ServiceContextUnresolvedError as e:
-            print(f"Warning: could not write service-context.json: {e}", file=sys.stderr)
-        except (OSError, ValueError) as e:
-            print(f"Warning: could not write service-context.json: {e}", file=sys.stderr)
-
     if args.pick is not None:
         if args.pick < 1 or args.pick > len(tasks):
             sys.exit(f"--pick must be between 1 and {len(tasks)} (inclusive)")
@@ -513,8 +482,6 @@ def main() -> None:
             comments = fetch_jira_issue_all_comments(k, attachment_index=aidx)
             if comments:
                 chosen = {**chosen, "comments": comments}
-
-    refresh_service_context()
 
     cmd = chosen.get("command")
     if args.print_command:

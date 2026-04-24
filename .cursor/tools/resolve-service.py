@@ -28,11 +28,16 @@ from lib.service_context import (  # noqa: E402
 )
 
 
+def refresh_service_context(cwd: Path) -> Path:
+    """Build `.cursor/context/service-context.json` and refresh the VS Code attach entry in `launch.json`."""
+    return write_service_context(cwd)
+
+
 def main() -> None:
     cwd = Path.cwd().resolve()
     try_load_dotenv(cwd)
     try:
-        out = write_service_context(cwd)
+        out = refresh_service_context(cwd)
     except ServiceContextUnresolvedError as e:
         print(str(e), file=sys.stderr)
         sys.exit(1)
