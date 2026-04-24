@@ -1,3 +1,3 @@
 .env
 .cursor/context/current-task.local.json
-.cursor/context/workspace-context.json
+.cursor/context/service-context.json

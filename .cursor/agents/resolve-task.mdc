@@ -10,7 +10,7 @@ model: composer-2-fast
 
 **In scope:** Resolve exactly one task from Jira using `.cursor/tools/pick-task`, then persist it with `.cursor/tools/save-task-context` so `.cursor/context/current-task.local.json` exists with a normalized **`task`** object (see `.cursor/context/schema/tasks.schema.json`).
 
-**Success:** `save-task-context` completes; the output file (default: `.cursor/context/current-task.local.json`) contains `task` with at least `id` and `label`, plus optional `jira_key`, `description`, `browse_url`, `command`, and optionally **`repository`** (for downstream tooling that reads this file).
+**Success:** `save-task-context` completes; the output file (default: `.cursor/context/current-task.local.json`) contains `task` with at least `id` and `label`, plus optional `jira_key`, **`status`** (Jira workflow name), **`attachments`** (issue file metadata and URLs, when any), **`comments`** (Jira issue comments, plaintext, when any), `description`, `browse_url`, `command`, and optionally **`repository`** (for downstream tooling that reads this file).
 
 ---
 
