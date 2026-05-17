@@ -75,6 +75,12 @@ def _service_path_from_code_workspace(dev_env_root: Path) -> Path | None:
     """
     If ``hootsuite-dev-env.code-workspace`` exists, resolve the service folder path (VS Code–style;
     relative paths are relative to the workspace file directory).
+
+    Precedence within the workspace file:
+      1. ``settings.cursor.primaryServiceFolder`` (set by configure-workspace.py)
+      2. First folder whose name starts with ``service-`` and is not ``*-models`` / ``*-idl``
+      3. Legacy name ``service-entitlement``
+      4. First folder other than ``hootsuite-dev-env``
     """
     ws = dev_env_root / "hootsuite-dev-env.code-workspace"
     if not ws.is_file():
@@ -87,25 +93,45 @@ def _service_path_from_code_workspace(dev_env_root: Path) -> Path | None:
     if not isinstance(folders, list):
         return None
     base = ws.parent.resolve()
-    chosen: dict | None = None
+    settings = data.get("settings")
+    primary_name: str | None = None
+    if isinstance(settings, dict):
+        raw = settings.get("cursor.primaryServiceFolder")
+        if isinstance(raw, str) and raw.strip():
+            primary_name = raw.strip()
+
+    def folder_path(entry: dict) -> Path | None:
+        rel = entry.get("path")
+        if not rel:
+            return None
+        return (base / str(rel)).resolve()
+
+    if primary_name:
+        for f in folders:
+            if isinstance(f, dict) and f.get("name") == primary_name:
+                return folder_path(f)
+
     for f in folders:
         if not isinstance(f, dict):
             continue
-        if f.get("name") == "service-entitlement":
-            chosen = f
-            break
-    if chosen is None:
-        for f in folders:
-            if not isinstance(f, dict):
-                continue
-            n = f.get("name")
-            if n and n != "hootsuite-dev-env":
-                chosen = f
-                break
-    if chosen is None or not chosen.get("path"):
-        return None
-    rel = str(chosen["path"])
-    return (base / rel).resolve()
+        n = f.get("name") or ""
+        if not n.startswith("service-") or n.endswith(("-models", "-idl")):
+            continue
+        p = folder_path(f)
+        if p is not None:
+            return p
+
+    for f in folders:
+        if isinstance(f, dict) and f.get("name") == "service-entitlement":
+            return folder_path(f)
+
+    for f in folders:
+        if not isinstance(f, dict):
+            continue
+        n = f.get("name")
+        if n and n != "hootsuite-dev-env":
+            return folder_path(f)
+    return None
 
 
 def resolve_service_repo(dev_env_root: Path) -> tuple[Path | None, str, list[str]]:

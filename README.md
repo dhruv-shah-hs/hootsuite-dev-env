@@ -13,9 +13,12 @@ Steps
    ```
 
    This script sources the nearest `.env` (walking up from your current directory), then runs `hootctl login docker` and `vaultlogin dev`, each of which will prompt for credentials. To only load `.env` without the logins: `CURSOR_DEV_ENV_SKIP_LOGINS=1 source ./.cursor/cursor-dev-env.sh`
-4. Open the workspace in Cursor and use agents with `@agent-name` and your prompt.
+4. Open `hootsuite-dev-env.code-workspace` in Cursor and use agents with `@agent-name` and your prompt.
 
-Following agents avaiable currently
+Following agents available currently
+
+**configure-workspace**
+Switch workspace stacks (“switch to organization”, “workspace options”) via named presets + AskQuestion, like **resolve-task**. Writes `hootsuite-dev-env.code-workspace`; reload the window after.
 
 **resolve-task**
 Pick one Jira issue (pick-task), persist it to .cursor/context/current-task.local.json (save-task-context). If the ticket is Done (is_deployed), ask whether to continue before saving.
@@ -31,5 +34,5 @@ Read service-context.json, run primary_commands.run (or tell the user the comman
 
 **build-task-context**
 Read current-task.local.json, explore the service repo, and write a status-driven plan (development vs PR review vs QA vs closure) based on task.status. Plan-only deliverable.
-Typical order: resolve-task → align-branch → resolve-service → start-service → build-task-context. 
+Typical order: configure-workspace → (reload window) → resolve-task → align-branch → resolve-service → start-service → build-task-context. 
 

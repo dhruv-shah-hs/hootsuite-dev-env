@@ -1,0 +1,153 @@
+{
+  "$schema": "./schema/workspace-services.schema.json",
+  "description": "Known sibling repos for hootsuite-dev-env.code-workspace. Primary service drives CURSOR_SERVICE_REPO and resolve-service discovery.",
+  "always_include": [
+    {
+      "name": "hootsuite-dev-env",
+      "path": "."
+    }
+  ],
+  "services": [
+    {
+      "id": "service-organization",
+      "folder": "service-organization",
+      "path": "../service-organization",
+      "kind": "service",
+      "companions": [
+        "service-organization-models",
+        "service-organization-idl"
+      ]
+    },
+    {
+      "id": "service-organization-models",
+      "folder": "service-organization-models",
+      "path": "../service-organization-models",
+      "kind": "library",
+      "parent_service": "service-organization"
+    },
+    {
+      "id": "service-organization-idl",
+      "folder": "service-organization-idl",
+      "path": "../service-organization-idl",
+      "kind": "idl",
+      "parent_service": "service-organization"
+    },
+    {
+      "id": "service-entitlement",
+      "folder": "service-entitlement",
+      "path": "../service-entitlement",
+      "kind": "service"
+    },
+    {
+      "id": "service-billing",
+      "folder": "service-billing",
+      "path": "../service-billing",
+      "kind": "service"
+    },
+    {
+      "id": "service-member",
+      "folder": "service-member",
+      "path": "../service-member",
+      "kind": "service"
+    },
+    {
+      "id": "service-global-session",
+      "folder": "service-global-session",
+      "path": "../service-global-session",
+      "kind": "service"
+    },
+    {
+      "id": "dashboard",
+      "folder": "dashboard",
+      "path": "../dashboard",
+      "kind": "frontend"
+    }
+  ],
+  "workspace_presets": [
+    {
+      "id": "organization",
+      "label": "Organization",
+      "description": "service-organization + models + idl",
+      "primary": "service-organization",
+      "folders": [
+        "service-organization",
+        "service-organization-models",
+        "service-organization-idl"
+      ],
+      "aliases": [
+        "organization",
+        "org",
+        "service-organization"
+      ]
+    },
+    {
+      "id": "entitlement",
+      "label": "Entitlement",
+      "description": "service-entitlement only",
+      "primary": "service-entitlement",
+      "folders": [
+        "service-entitlement"
+      ],
+      "aliases": [
+        "entitlement",
+        "service-entitlement"
+      ]
+    },
+    {
+      "id": "billing",
+      "label": "Billing",
+      "description": "service-billing only",
+      "primary": "service-billing",
+      "folders": [
+        "service-billing"
+      ],
+      "aliases": [
+        "billing",
+        "service-billing"
+      ]
+    },
+    {
+      "id": "member",
+      "label": "Member",
+      "description": "service-member only",
+      "primary": "service-member",
+      "folders": [
+        "service-member"
+      ],
+      "aliases": [
+        "member",
+        "service-member"
+      ]
+    },
+    {
+      "id": "global-session",
+      "label": "Global session",
+      "description": "service-global-session only",
+      "primary": "service-global-session",
+      "folders": [
+        "service-global-session"
+      ],
+      "aliases": [
+        "global-session",
+        "session",
+        "service-global-session"
+      ]
+    },
+    {
+      "id": "organization-dashboard",
+      "label": "Organization + dashboard",
+      "description": "organization stack plus dashboard frontend",
+      "primary": "service-organization",
+      "folders": [
+        "service-organization",
+        "service-organization-models",
+        "service-organization-idl",
+        "dashboard"
+      ],
+      "aliases": [
+        "organization-dashboard",
+        "org-dashboard"
+      ]
+    }
+  ]
+}

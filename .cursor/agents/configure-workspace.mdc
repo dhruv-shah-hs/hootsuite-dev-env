@@ -1,0 +1,100 @@
+---
+Switch workspace stacks or pick repos for the multi-root workspace. Uses `--list-json` and **AskQuestion** with named **workspace_presets** (Organization, Entitlement, …) or custom folder picks. Writes `hootsuite-dev-env.code-workspace`; reload the window after apply. Run before **resolve-task** when changing service context.
+name: configure-workspace
+model: composer-2-fast
+---
+
+# Configure workspace
+
+## Purpose and boundaries
+
+**In scope:** Switch or configure which sibling repos appear in the multi-root workspace and which repo is the **primary service** (`CURSOR_SERVICE_REPO`). Persist by writing **`hootsuite-dev-env.code-workspace`**.
+
+**Success:** `configure-workspace.py` exits 0; user reloads the workspace window. Optionally **`service-context.json`** refreshed via **resolve-service**.
+
+---
+
+## Prerequisite
+
+- **Working directory:** **hootsuite-dev-env** repository root.
+- **Catalog:** `.cursor/context/workspace-services.json` (`workspace_presets` + `services`).
+
+---
+
+## Resolve workspace (chat — default)
+
+Do **not** use TTY `input()` in agent shells.
+
+1. **List options:**
+
+   ```bash
+   python3 .cursor/tools/configure-workspace.py --list-json
+   ```
+
+   Use **`workspace_presets`** (named stacks), **`current`**, and only fall back to **`primary_options`** / **`folder_options`** for custom setups.
+
+2. **AskQuestion — which workspace?** (single choice) — **required** when the user says **switch**, **switch to**, **change workspace**, **workspace options**, **pick workspace**, or invokes this agent without naming a stack:
+
+   - One option per **`workspace_presets`** entry: label = **`label`**; description = **`description`**; value = **`id`**.
+   - Mark the option where **`is_current`** is true (e.g. “(current)”).
+   - Add **Custom** (value `custom`) to pick primary + folders manually (step 3b).
+
+   **Skip this question** only when the user already named a stack (see **Prompt → behavior**).
+
+3. **Apply preset** (most paths):
+
+   ```bash
+   python3 .cursor/tools/configure-workspace.py --preset PRESET_ID
+   ```
+
+   Examples: `--preset organization`, `--preset entitlement`, `--preset organization-dashboard`.
+
+3b. **Custom only:** **AskQuestion** primary service, then folders (`allow_multiple: true`), then:
+
+   ```bash
+   python3 .cursor/tools/configure-workspace.py --primary PRIMARY_ID --folders id1,id2,...
+   ```
+
+4. **AskQuestion — refresh service context:** **Skip** / **Run resolve-service now**. If run:
+
+   ```bash
+   python3 .cursor/tools/resolve-service.py
+   ```
+
+5. Remind user to **reload the workspace window** once.
+
+---
+
+## Prompt → behavior
+
+| User says | What to do |
+| --- | --- |
+| **switch workspace** / **workspace options** / **which workspace** / **change workspace** | `--list-json` → **AskQuestion** on **`workspace_presets`** (+ Custom) → `--preset` or custom → optional resolve-service → reload reminder. |
+| **switch to** *name* / *stack name* (organization, entitlement, billing, org, …) | Map *name* to a **`workspace_presets`** **`id`** (aliases in catalog). If unambiguous, **`--preset ID`** without AskQuestion; if ambiguous, one **AskQuestion** among matches. |
+| **refresh workspace** / **reapply workspace** | Re-run **`--preset`** for the preset matching **`current`**, or re-apply **`current.primary_id`** + **`current.folder_ids`**. Run **resolve-service**. Reload reminder. |
+| **show current workspace** | `--list-json` only; one short summary of **`current`** and matching preset if any. |
+| configure / pick service / change repos (no “switch”) | Same as **switch workspace** (preset picker first). |
+
+**Alias hints:** organization → `organization`; entitlement → `entitlement`; billing → `billing`; member → `member`; global session / session → `global-session`; organization + dashboard → `organization-dashboard`.
+
+---
+
+## Non-interactive
+
+| Situation | Command |
+| --- | --- |
+| Named preset | `configure-workspace.py --preset organization` |
+| Explicit ids | `configure-workspace.py --primary … --folders …` |
+| Human terminal | `configure-workspace.py --interactive` |
+
+---
+
+## Typical session order
+
+**configure-workspace** → reload window → **resolve-task** → **align-branch** → **resolve-service** → **start-service** → **build-task-context**
+
+---
+
+## Chat output (agents)
+
+**Minimal:** one line — preset label or primary id + folders. Reload window once. Mention **service-context.json** only if resolve-service ran. No JSON dumps unless failed.
