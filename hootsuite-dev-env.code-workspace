@@ -5,22 +5,27 @@
       "path": "."
     },
     {
+      "name": "dashboard",
+      "path": "../dashboard"
+    },
+    {
       "name": "service-entitlement",
       "path": "../service-entitlement"
     }
   ],
   "settings": {
+    "cursor.primaryServiceFolder": "dashboard",
     "files.watcherExclude": {
       "**/target": true
     },
     "terminal.integrated.env.osx": {
-      "CURSOR_SERVICE_REPO": "${workspaceFolder:service-entitlement}"
+      "CURSOR_SERVICE_REPO": "${workspaceFolder:dashboard}"
     },
     "terminal.integrated.env.linux": {
-      "CURSOR_SERVICE_REPO": "${workspaceFolder:service-entitlement}"
+      "CURSOR_SERVICE_REPO": "${workspaceFolder:dashboard}"
     },
     "terminal.integrated.env.windows": {
-      "CURSOR_SERVICE_REPO": "${workspaceFolder:service-entitlement}"
+      "CURSOR_SERVICE_REPO": "${workspaceFolder:dashboard}"
     }
   }
 }

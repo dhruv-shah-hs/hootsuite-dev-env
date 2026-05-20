@@ -1,26 +1,17 @@
 #!/usr/bin/env python3
 """
-TTY helper: from `hootsuite-dev-env` root, optionally prompt whether to show the local
-`primary_commands.run` command, then whether you will run that command yourself (wording
-tailored for self-run vs paste/background). Uses `.cursor/context/service-context.json` when
-present (see `resolve_service` / `align-branch` to refresh it).
+TTY helper: from `hootsuite-dev-env` root, optionally prompt whether to show local start
+commands from `.cursor/context/service-context.json` (multi-service `services` map).
 
-Run this after `pick-task` + `save-task-context` when you want the interactive flow; it is
-not invoked by `pick-task`.
+Run after `pick-task` + `save-task-context` when you want the interactive flow.
 
-Environment (any skips the prompt when set to 1/true/yes):
+Environment (skips prompts when set to 1/true/yes):
   START_SERVICE_NO_PROMPT
-  PICK_TASK_NO_RUN_SERVICE_PROMPT  (legacy name; same behavior)
-
-Skipped when stdout or stdin is not a TTY (e.g. automation) or when skipped via env.
-
-Examples:
-  python3 .cursor/tools/start-service.py
+  PICK_TASK_NO_RUN_SERVICE_PROMPT  (legacy)
 """
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from pathlib import Path
@@ -29,7 +20,12 @@ _CURSOR_DIR = Path(__file__).resolve().parent.parent
 if str(_CURSOR_DIR) not in sys.path:
     sys.path.insert(0, str(_CURSOR_DIR))
 
-from lib.service_context import service_context_path  # noqa: E402
+from lib.service_context import (  # noqa: E402
+    get_service_instance,
+    list_runnable_service_instances,
+    load_service_context,
+    resolve_run_command as resolve_run_command_for_instance,
+)
 
 
 def _skip_prompt_via_env() -> bool:
@@ -39,36 +35,45 @@ def _skip_prompt_via_env() -> bool:
     return False
 
 
-def resolve_run_command(cwd: Path | None = None) -> str:
-    """Best-effort `primary_commands.run` from service-context.json, else make run fallback."""
+def resolve_run_command(cwd: Path | None = None, service_id: str | None = None) -> str:
+    """Primary (or named) service: prefer run, then start; else entitlement fallback."""
     root = (cwd or Path.cwd()).resolve()
-    ctx_path = service_context_path(root)
-    if ctx_path.is_file():
-        try:
-            doc = json.loads(ctx_path.read_text(encoding="utf-8"))
-            pc = doc.get("primary_commands")
-            if isinstance(pc, dict):
-                raw = pc.get("run")
-                if isinstance(raw, str) and raw.strip():
-                    return raw.strip()
-        except (OSError, json.JSONDecodeError):
-            pass
+    doc = load_service_context(root)
+    if doc:
+        inst = get_service_instance(doc, service_id)
+        if inst:
+            cmd = resolve_run_command_for_instance(inst)
+            if cmd:
+                return cmd
     return "cd ../service-entitlement && make run"
 
 
+def resolve_all_run_commands(cwd: Path | None = None) -> list[tuple[str, str]]:
+    """(service_id, command) for each runnable instance with a run/start command."""
+    root = (cwd or Path.cwd()).resolve()
+    doc = load_service_context(root)
+    if not doc:
+        return []
+    out: list[tuple[str, str]] = []
+    for inst in list_runnable_service_instances(doc):
+        sid = inst.get("id")
+        cmd = resolve_run_command_for_instance(inst)
+        if isinstance(sid, str) and cmd:
+            out.append((sid, cmd))
+    return out
+
+
 def maybe_prompt_run_service_interactive(cwd: Path | None = None) -> None:
-    """
-    In an interactive terminal from dev-env root, optionally ask whether to show the run command,
-    then whether the user will run it themselves (so the hint text matches intent).
-    """
     if _skip_prompt_via_env():
         return
     if not (sys.stdout.isatty() and sys.stdin.isatty()):
         return
 
-    run_cmd = resolve_run_command(cwd)
+    commands = resolve_all_run_commands(cwd)
+    if not commands:
+        commands = [("primary", resolve_run_command(cwd))]
 
-    print("\nRun the local service now? [y/N] ", end="", file=sys.stderr, flush=True)
+    print("\nRun local service(s) now? [y/N] ", end="", file=sys.stderr, flush=True)
     try:
         line = input()
     except (EOFError, KeyboardInterrupt):
@@ -78,8 +83,7 @@ def maybe_prompt_run_service_interactive(cwd: Path | None = None) -> None:
         return
 
     print(
-        "\nWill you run this start command yourself in your terminal? [Y/n] "
-        "(Y = instructions for pasting yourself; n = same command, phrased for a new tab / background / agent)\n> ",
+        "\nWill you run these start commands yourself in your terminal? [Y/n]\n> ",
         end="",
         file=sys.stderr,
         flush=True,
@@ -90,20 +94,15 @@ def maybe_prompt_run_service_interactive(cwd: Path | None = None) -> None:
         print("", file=sys.stderr)
         return
     self_run = line2.strip().lower() in ("", "y", "yes")
-    if self_run:
-        print(
-            "\nRun this yourself from the hootsuite-dev-env repo root "
-            "(so cd ../service-entitlement in the command resolves):\n"
-            f"  {run_cmd}\n",
-            file=sys.stderr,
-        )
-    else:
-        print(
-            "\nStart command — open Terminal → New Terminal or use a background/agent shell "
-            "from dev-env root:\n"
-            f"  {run_cmd}\n",
-            file=sys.stderr,
-        )
+    header = (
+        "\nRun these yourself from the hootsuite-dev-env repo root:\n"
+        if self_run
+        else "\nStart commands — use Terminal → New Terminal or background/agent shells from dev-env root:\n"
+    )
+    print(header, file=sys.stderr)
+    for sid, cmd in commands:
+        print(f"  [{sid}] {cmd}", file=sys.stderr)
+    print("", file=sys.stderr)
 
 
 def main() -> None:

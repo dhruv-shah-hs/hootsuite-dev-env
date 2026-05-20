@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Build `.cursor/context/service-context.json` and refresh the VS Code attach entry in `.vscode/launch.json`.
+Build `.cursor/context/service-context.json` (multi-service `services` map) and refresh VS Code attach entries in `.vscode/launch.json`.
 
 Run from the hootsuite-dev-env repo root (after `resolve-task` and `align-branch`).
 
 loads `./.env` so `CURSOR_SERVICE_REPO` is available to discovery (see `.cursor/lib/service_context.resolve_service_repo`).
-Path resolution: `CURSOR_SERVICE_REPO` (local path), else `hootsuite-dev-env.code-workspace`, else sibling `../service-entitlement`.
+Discovers every runnable folder in `hootsuite-dev-env.code-workspace` (catalog kinds `service` / `frontend`). Primary id from `cursor.primaryServiceFolder` or `CURSOR_SERVICE_REPO`.
 """
 
 from __future__ import annotations

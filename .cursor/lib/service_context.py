@@ -175,6 +175,222 @@ def resolve_service_repo(dev_env_root: Path) -> tuple[Path | None, str, list[str
 
 class ServiceContextUnresolvedError(RuntimeError):
     """Raised when the service repo path cannot be resolved (e.g. URL-only ``CURSOR_SERVICE_REPO``)."""
+
+
+_RUNNABLE_KINDS = frozenset({"service", "frontend"})
+
+_SERVICE_INSTANCE_FIELDS = frozenset(
+    {
+        "service_root",
+        "makefile",
+        "tech_stack",
+        "toolchain",
+        "service_git",
+        "make_targets",
+        "primary_commands",
+        "endpoints",
+        "tests",
+        "config_surface",
+        "docs_index",
+        "task_repo_fit",
+        "vscode_launch",
+        "notes",
+    }
+)
+
+
+def workspace_services_catalog_path(dev_env_root: Path) -> Path:
+    return dev_env_root.resolve() / ".cursor" / "context" / "workspace-services.json"
+
+
+def load_workspace_services_catalog(dev_env_root: Path) -> dict[str, Any]:
+    """Load workspace-services.json; returns by_id and by_folder indexes."""
+    path = workspace_services_catalog_path(dev_env_root)
+    empty: dict[str, Any] = {"by_id": {}, "by_folder": {}}
+    if not path.is_file():
+        return empty
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return empty
+    by_id: dict[str, dict[str, Any]] = {}
+    by_folder: dict[str, dict[str, Any]] = {}
+    for entry in data.get("services") or []:
+        if not isinstance(entry, dict):
+            continue
+        sid = entry.get("id")
+        folder = entry.get("folder")
+        if isinstance(sid, str) and sid:
+            by_id[sid] = entry
+        if isinstance(folder, str) and folder:
+            by_folder[folder] = entry
+    return {"by_id": by_id, "by_folder": by_folder}
+
+
+def _code_workspace_folder_entries(dev_env_root: Path) -> list[tuple[str, Path]]:
+    """(folder_name, absolute_path) for each folder in hootsuite-dev-env.code-workspace."""
+    ws = dev_env_root / "hootsuite-dev-env.code-workspace"
+    if not ws.is_file():
+        return []
+    try:
+        data = json.loads(ws.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    folders = data.get("folders")
+    if not isinstance(folders, list):
+        return []
+    base = ws.parent.resolve()
+    out: list[tuple[str, Path]] = []
+    for f in folders:
+        if not isinstance(f, dict):
+            continue
+        name = f.get("name")
+        rel = f.get("path")
+        if not isinstance(name, str) or not name or not rel:
+            continue
+        if name == "hootsuite-dev-env":
+            continue
+        out.append((name, (base / str(rel)).resolve()))
+    return out
+
+
+def discover_workspace_runnable_services(dev_env_root: Path) -> list[dict[str, Any]]:
+    """Runnable services in the workspace file + catalog (id, folder, kind, path)."""
+    catalog = load_workspace_services_catalog(dev_env_root)
+    by_folder = catalog["by_folder"]
+    runnables: list[dict[str, Any]] = []
+    for folder_name, abs_path in _code_workspace_folder_entries(dev_env_root):
+        entry = by_folder.get(folder_name)
+        if not entry:
+            continue
+        kind = entry.get("kind")
+        if kind not in _RUNNABLE_KINDS:
+            continue
+        runnables.append(
+            {
+                "id": entry["id"],
+                "folder": folder_name,
+                "kind": kind,
+                "path": abs_path,
+            }
+        )
+    return runnables
+
+
+def resolve_primary_service_id(
+    dev_env_root: Path,
+    runnable_ids: list[str],
+    *,
+    primary_path: Path | None = None,
+) -> str | None:
+    """Primary id from env path, workspace setting, or first runnable."""
+    catalog = load_workspace_services_catalog(dev_env_root)
+    by_id = catalog["by_id"]
+    by_folder = catalog["by_folder"]
+
+    if primary_path is not None and primary_path.is_dir():
+        resolved = primary_path.resolve()
+        for entry in by_id.values():
+            p = entry.get("path")
+            if isinstance(p, str):
+                candidate = (dev_env_root.resolve() / p).resolve()
+                if candidate == resolved:
+                    return entry.get("id")
+        name = resolved.name
+        for entry in by_id.values():
+            if entry.get("folder") == name:
+                return entry.get("id")
+
+    ws = dev_env_root / "hootsuite-dev-env.code-workspace"
+    if ws.is_file():
+        try:
+            data = json.loads(ws.read_text(encoding="utf-8"))
+            settings = data.get("settings")
+            if isinstance(settings, dict):
+                primary_folder = settings.get("cursor.primaryServiceFolder")
+                if isinstance(primary_folder, str) and primary_folder in by_folder:
+                    return by_folder[primary_folder].get("id")
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    return runnable_ids[0] if runnable_ids else None
+
+
+def normalize_service_context(doc: dict[str, Any]) -> dict[str, Any]:
+    """Ensure services map exists; upgrade legacy single-service documents."""
+    services = doc.get("services")
+    if isinstance(services, dict) and services:
+        return doc
+
+    primary_id = doc.get("primary_service_id")
+    if not isinstance(primary_id, str) or not primary_id:
+        sr = doc.get("service_root")
+        primary_id = Path(str(sr or ".")).name if sr else "primary"
+
+    instance: dict[str, Any] = {"id": primary_id}
+    for key in _SERVICE_INSTANCE_FIELDS:
+        if key in doc:
+            instance[key] = doc[key]
+
+    doc = dict(doc)
+    doc["services"] = {primary_id: instance}
+    doc.setdefault("primary_service_id", primary_id)
+    doc.setdefault("workspace_service_ids", [primary_id])
+    return doc
+
+
+def get_service_instance(doc: dict[str, Any], service_id: str | None = None) -> dict[str, Any] | None:
+    doc = normalize_service_context(doc)
+    sid = service_id or doc.get("primary_service_id")
+    if not isinstance(sid, str):
+        return None
+    services = doc.get("services")
+    if not isinstance(services, dict):
+        return None
+    inst = services.get(sid)
+    return inst if isinstance(inst, dict) else None
+
+
+def list_runnable_service_instances(doc: dict[str, Any]) -> list[dict[str, Any]]:
+    doc = normalize_service_context(doc)
+    services = doc.get("services")
+    if not isinstance(services, dict):
+        return []
+    out: list[dict[str, Any]] = []
+    for sid in doc.get("workspace_service_ids") or list(services.keys()):
+        inst = services.get(sid)
+        if not isinstance(inst, dict):
+            continue
+        if inst.get("kind") not in _RUNNABLE_KINDS:
+            continue
+        out.append(inst)
+    return out
+
+
+def load_service_context(cwd: Path | None = None) -> dict[str, Any] | None:
+    path = service_context_path(cwd)
+    if not path.is_file():
+        return None
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return normalize_service_context(doc) if isinstance(doc, dict) else None
+
+
+def _denormalize_primary_fields(doc: dict[str, Any]) -> None:
+    """Mirror primary instance to document root for legacy consumers."""
+    primary_id = doc.get("primary_service_id")
+    if not isinstance(primary_id, str):
+        return
+    inst = get_service_instance(doc, primary_id)
+    if not inst:
+        return
+    for key in _SERVICE_INSTANCE_FIELDS:
+        if key in inst:
+            doc[key] = inst[key]
+
+
 def _path_posix_relative_to(base: Path, target: Path) -> str:
     """POSIX path from `base` to `target`, using `..` when the service is a sibling repo."""
     br = base.resolve()
@@ -861,6 +1077,7 @@ def _primary_commands(service_rel_posix: str, target_names: set[str]) -> dict[st
     out: dict[str, str] = {}
     mapping = [
         ("run", "run"),
+        ("start", "start"),
         ("test", "test"),
         ("compile_and_test", "compile-and-test-service"),
         ("vault_setup_local_dev", "vault-setup-local-dev"),
@@ -900,13 +1117,20 @@ def _stack_suggests_go_attach(tech: dict[str, Any]) -> bool:
     return "Go" in (tech.get("languages") or [])
 
 
-def _vscode_attach_configuration(doc: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]] | None:
+def _launch_attach_config_name(service_id: str, stack_label: str) -> str:
+    return f"Attach: {service_id} ({stack_label})"
+
+
+def _vscode_attach_configuration(
+    doc: dict[str, Any], *, service_id: str | None = None
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
     """
     Returns (launch_configuration, workspace_debug_meta) or None if unsupported / no service.
     """
     tech = doc.get("tech_stack") or {}
     sr = doc.get("service_root")
-    if not sr:
+    sid = service_id if isinstance(service_id, str) and service_id else doc.get("id")
+    if not sr or not isinstance(sid, str) or not sid:
         return None
 
     if _stack_suggests_jvm_attach(tech):
@@ -923,7 +1147,7 @@ def _vscode_attach_configuration(doc: dict[str, Any]) -> tuple[dict[str, Any], d
         cfg: dict[str, Any] = {
             "type": "java",
             "request": "attach",
-            "name": _LAUNCH_ATTACH_JAVA_NAME,
+            "name": _launch_attach_config_name(sid, "JDWP"),
             "hostName": "localhost",
             "port": meta["port"],
         }
@@ -942,7 +1166,7 @@ def _vscode_attach_configuration(doc: dict[str, Any]) -> tuple[dict[str, Any], d
         cfg = {
             "type": "node",
             "request": "attach",
-            "name": _LAUNCH_ATTACH_NODE_NAME,
+            "name": _launch_attach_config_name(sid, "Node"),
             "address": "localhost",
             "port": meta["port"],
             "restart": True,
@@ -962,7 +1186,7 @@ def _vscode_attach_configuration(doc: dict[str, Any]) -> tuple[dict[str, Any], d
         cfg = {
             "type": "debugpy",
             "request": "attach",
-            "name": _LAUNCH_ATTACH_PYTHON_NAME,
+            "name": _launch_attach_config_name(sid, "debugpy"),
             "connect": {"host": "localhost", "port": meta["port"]},
             "justMyCode": False,
         }
@@ -981,7 +1205,7 @@ def _vscode_attach_configuration(doc: dict[str, Any]) -> tuple[dict[str, Any], d
         cfg = {
             "type": "go",
             "request": "attach",
-            "name": _LAUNCH_ATTACH_GO_NAME,
+            "name": _launch_attach_config_name(sid, "Delve"),
             "mode": "remote",
             "port": meta["port"],
             "host": "127.0.0.1",
@@ -991,19 +1215,41 @@ def _vscode_attach_configuration(doc: dict[str, Any]) -> tuple[dict[str, Any], d
     return None
 
 
-def merge_vscode_launch_attach(root: Path, doc: dict[str, Any]) -> dict[str, Any] | None:
+def _launch_meta_from_pair(
+    root: Path, cfg: dict[str, Any], meta: dict[str, Any], inst: dict[str, Any]
+) -> dict[str, Any]:
+    launch_path = root / ".vscode" / "launch.json"
+    stable_name = cfg.get("name")
+    try:
+        rel = launch_path.relative_to(root).as_posix()
+    except ValueError:
+        rel = str(launch_path)
+    sr = inst.get("service_root")
+    service_name = Path(str(sr or ".")).name
+    return {
+        "path": rel,
+        "configuration_name": stable_name,
+        "service_name": service_name,
+        "debug_attach": meta,
+    }
+
+
+def _is_generator_attach_name(name: str, service_ids: frozenset[str]) -> bool:
+    if not isinstance(name, str):
+        return False
+    for sid in service_ids:
+        prefix = f"Attach: {sid} ("
+        if name.startswith(prefix) and name.endswith(")"):
+            return True
+    return False
+
+
+def merge_vscode_launch_for_all_services(root: Path, services: dict[str, dict[str, Any]]) -> None:
     """
-    Upsert a single attach configuration in `.vscode/launch.json` under `root`.
+    Upsert attach configurations in `.vscode/launch.json` for every service instance.
 
-    Returns metadata to store in service-context.json, or None if skipped.
+    Mutates each instance: sets ``vscode_launch`` when an attach template exists, otherwise may append a note.
     """
-    pair = _vscode_attach_configuration(doc)
-    if not pair:
-        return None
-
-    cfg, meta = pair
-    cfg_out = copy.deepcopy(cfg)
-
     vscode_dir = root / ".vscode"
     vscode_dir.mkdir(parents=True, exist_ok=True)
     launch_path = vscode_dir / "launch.json"
@@ -1022,44 +1268,63 @@ def merge_vscode_launch_attach(root: Path, doc: dict[str, Any]) -> dict[str, Any
     if not isinstance(cfgs, list):
         cfgs = []
 
-    cfgs = [c for c in cfgs if not (isinstance(c, dict) and c.get("name") in _ALL_LAUNCH_ATTACH_NAMES)]
-    cfgs.append(cfg_out)
+    sid_set = frozenset(services.keys())
+    cfgs = [
+        c
+        for c in cfgs
+        if not (
+            isinstance(c, dict)
+            and (
+                c.get("name") in _ALL_LAUNCH_ATTACH_NAMES
+                or _is_generator_attach_name(c.get("name") or "", sid_set)
+            )
+        )
+    ]
+
+    pending: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+    for sid, inst in services.items():
+        pair = _vscode_attach_configuration(inst, service_id=sid)
+        if not pair:
+            inst.pop("vscode_launch", None)
+            if inst.get("service_root"):
+                inst.setdefault("notes", []).append(
+                    "No VS Code attach template for this stack; add an attach configuration to .vscode/launch.json manually."
+                )
+            continue
+        cfg, meta = pair
+        cfg_out = copy.deepcopy(cfg)
+        pending.append((sid, cfg_out, meta))
+        cfgs.append(cfg_out)
+
     data["configurations"] = cfgs
     data.setdefault("version", "0.2.0")
-
     launch_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
-    stable_name = cfg_out.get("name")
+    for sid, cfg_out, meta in pending:
+        inst = services[sid]
+        inst["vscode_launch"] = _launch_meta_from_pair(root, cfg_out, meta, inst)
 
-    try:
-        rel = launch_path.relative_to(root).as_posix()
-    except ValueError:
-        rel = str(launch_path)
 
+def merge_vscode_launch_attach(
+    root: Path, doc: dict[str, Any], *, service_id: str | None = None
+) -> dict[str, Any] | None:
+    """
+    Upsert attach config(s) for a single service instance document.
+
+    Delegates to :func:`merge_vscode_launch_for_all_services`.
+    """
+    sid = service_id if isinstance(service_id, str) and service_id else doc.get("id")
+    if not isinstance(sid, str) or not sid:
+        return None
+    merge_vscode_launch_for_all_services(root, {sid: doc})
+    vlc = doc.get("vscode_launch")
+    return vlc if isinstance(vlc, dict) else None
+
+
+def _empty_service_instance(service_id: str, kind: str) -> dict[str, Any]:
     return {
-        "path": rel,
-        "configuration_name": stable_name,
-        "service_name": Path(doc.get("service_root") or ".").name,
-        "debug_attach": meta,
-    }
-
-
-def build_service_context(cwd: Path | None = None) -> dict[str, Any]:
-    """
-    Build the service-context document (does not write to disk).
-
-    `cwd` is the dev-env repository root (defaults to process cwd).
-    """
-    root = (cwd or Path.cwd()).resolve()
-    service_abs, src, resolve_notes = resolve_service_repo(root)
-    generated_at = datetime.now(timezone.utc).isoformat()
-
-    path_meta: dict[str, Any] = {"source": src, "provenance_notes": list(resolve_notes)}
-
-    doc: dict[str, Any] = {
-        "$schema": "./schema/service-context.schema.json",
-        "generated_at": generated_at,
-        "service_path_resolution": path_meta,
+        "id": service_id,
+        "kind": kind,
         "service_root": None,
         "makefile": None,
         "tech_stack": {"languages": [], "build_tools": [], "manifests": [], "summary": ""},
@@ -1095,40 +1360,48 @@ def build_service_context(cwd: Path | None = None) -> dict[str, Any]:
         "notes": [],
     }
 
-    if service_abs is None:
-        for n in resolve_notes:
-            doc["notes"].append(n)
-        doc["tech_stack"]["summary"] = "unknown (service path unresolved)"
-        return doc
 
-    service_base = service_abs
+def build_service_instance(
+    root: Path,
+    service_base: Path,
+    service_id: str,
+    kind: str,
+    task: dict[str, Any] | None,
+    is_primary: bool,
+    resolve_notes: list[str],
+) -> dict[str, Any]:
+    inst = _empty_service_instance(service_id, kind)
+    notes: list[str] = list(inst["notes"])
+
     if not service_base.is_dir():
-        doc["notes"].append(
+        notes.append(
             f"Service directory is missing: {service_base}. "
             "Clone the repository or set CURSOR_SERVICE_REPO to a valid local path."
         )
+        inst["tech_stack"]["summary"] = "unknown (service directory not found)"
         for n in resolve_notes:
             if n:
-                doc["notes"].append(n)
-        doc["tech_stack"]["summary"] = "unknown (service directory not found)"
-        return doc
+                notes.append(n)
+        inst["notes"] = notes
+        return inst
 
     makefiles = _find_makefiles(service_base)
     if not makefiles:
-        doc["notes"].append(
+        notes.append(
             f"No Makefile found under the service root (within search depth): {service_base}."
         )
+        inst["tech_stack"]["summary"] = "unknown (no Makefile)"
         for n in resolve_notes:
             if n:
-                doc["notes"].append(n)
-        doc["tech_stack"]["summary"] = "unknown (no Makefile)"
-        return doc
+                notes.append(n)
+        inst["notes"] = notes
+        return inst
 
     service_root = _pick_service_root(makefiles, service_base)
     assert service_root is not None
     makefile = service_root / "Makefile"
     if not makefile.is_file():
-        doc["notes"].append("Selected service root has no Makefile at its root; using first Makefile path.")
+        notes.append("Selected service root has no Makefile at its root; using first Makefile path.")
         makefile = makefiles[0]
         service_root = makefile.parent
 
@@ -1137,37 +1410,110 @@ def build_service_context(cwd: Path | None = None) -> dict[str, Any]:
     targets = _parse_make_targets(makefile)
     names = {t["name"] for t in targets}
 
-    doc["service_root"] = service_rel
-    doc["makefile"] = _path_posix_relative_to(root, makefile)
-    doc["make_targets"] = targets
-    doc["tech_stack"] = _detect_tech_stack(service_root)
-    doc["toolchain"] = _detect_toolchain(service_root, doc["tech_stack"]["manifests"])
-    doc["service_git"] = _detect_service_git(service_root)
-    doc["primary_commands"] = _primary_commands(service_rel, names)
+    inst["service_root"] = service_rel
+    inst["makefile"] = _path_posix_relative_to(root, makefile)
+    inst["make_targets"] = targets
+    inst["tech_stack"] = _detect_tech_stack(service_root)
+    inst["toolchain"] = _detect_toolchain(service_root, inst["tech_stack"]["manifests"])
+    inst["service_git"] = _detect_service_git(service_root)
+    inst["primary_commands"] = _primary_commands(service_rel, names)
 
     makefile_text = _read_text(makefile)
     docker_text = _read_text(service_root / "Dockerfile")
     readme_text = _read_text(service_root / "README.md")
-    doc["endpoints"] = _detect_endpoints(service_root, makefile_text, docker_text, readme_text)
-    doc["tests"] = _detect_tests(service_root, names, service_rel, doc["tech_stack"])
-    doc["config_surface"] = _detect_config_and_secrets(service_root, names, service_rel)
-    doc["docs_index"] = _detect_docs(service_root)
-    doc["task_repo_fit"] = _compute_task_repo_fit(service_root, read_current_task_for_workspace(root))
+    inst["endpoints"] = _detect_endpoints(service_root, makefile_text, docker_text, readme_text)
+    inst["tests"] = _detect_tests(service_root, names, service_rel, inst["tech_stack"])
+    inst["config_surface"] = _detect_config_and_secrets(service_root, names, service_rel)
+    inst["docs_index"] = _detect_docs(service_root)
+    if is_primary:
+        inst["task_repo_fit"] = _compute_task_repo_fit(service_root, task)
 
     if not names:
-        doc["notes"].append("Makefile present but no targets parsed (unusual syntax).")
+        notes.append("Makefile present but no targets parsed (unusual syntax).")
     if "test" not in names:
-        doc["notes"].append("Makefile has no `test` target; add one or use another test entrypoint.")
-    if "run" not in names:
-        doc["notes"].append("Makefile has no `run` target; add one for local service startup.")
-    if doc["task_repo_fit"]["signal"] == "none":
-        doc["notes"].append(
+        notes.append("Makefile has no `test` target; add one or use another test entrypoint.")
+    if "run" not in names and "start" not in names:
+        notes.append("Makefile has no `run` or `start` target; add one for local service startup.")
+    if is_primary and inst["task_repo_fit"]["signal"] == "none":
+        notes.append(
             "Task keywords did not match any service files; confirm this is the right repo or refine the Jira label."
         )
-    for n in resolve_notes:
-        if n:
-            doc["notes"].append(n)
+    if is_primary:
+        for n in resolve_notes:
+            if n:
+                notes.append(n)
 
+    inst["notes"] = notes
+    return inst
+
+
+def resolve_run_command(inst: dict[str, Any]) -> str | None:
+    """Prefer ``primary_commands.run``, then ``start``."""
+    pc = inst.get("primary_commands")
+    if not isinstance(pc, dict):
+        return None
+    for key in ("run", "start"):
+        raw = pc.get(key)
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+    return None
+
+
+def build_service_context(cwd: Path | None = None) -> dict[str, Any]:
+    """
+    Build the service-context document (does not write to disk).
+
+    Discovers runnable workspace services, fills ``services`` keyed by id, and mirrors the primary
+    instance to the document root via :func:`_denormalize_primary_fields`.
+    """
+    root = (cwd or Path.cwd()).resolve()
+    service_abs, src, resolve_notes = resolve_service_repo(root)
+    generated_at = datetime.now(timezone.utc).isoformat()
+    path_meta: dict[str, Any] = {"source": src, "provenance_notes": list(resolve_notes)}
+    task = read_current_task_for_workspace(root)
+
+    runnables = discover_workspace_runnable_services(root)
+    runnable_ids: list[str] = []
+    for r in runnables:
+        rid = r.get("id")
+        if isinstance(rid, str) and rid:
+            runnable_ids.append(rid)
+
+    primary_id = resolve_primary_service_id(root, runnable_ids, primary_path=service_abs)
+
+    services: dict[str, dict[str, Any]] = {}
+    for r in runnables:
+        sid = r.get("id")
+        rkind = r.get("kind")
+        rpath = r.get("path")
+        if not isinstance(sid, str) or not sid or rkind not in _RUNNABLE_KINDS or not isinstance(rpath, Path):
+            continue
+        inst = build_service_instance(
+            root,
+            rpath,
+            sid,
+            str(rkind),
+            task,
+            sid == primary_id,
+            resolve_notes,
+        )
+        services[sid] = inst
+
+    doc: dict[str, Any] = {
+        "$schema": "./schema/service-context.schema.json",
+        "generated_at": generated_at,
+        "service_path_resolution": path_meta,
+        "services": services,
+        "primary_service_id": primary_id,
+        "workspace_service_ids": runnable_ids,
+    }
+
+    if not services:
+        for n in resolve_notes:
+            if n:
+                doc.setdefault("notes", []).append(n)
+
+    _denormalize_primary_fields(doc)
     return doc
 
 
@@ -1177,24 +1523,25 @@ def service_context_path(cwd: Path | None = None) -> Path:
 
 
 def write_service_context(cwd: Path | None = None) -> Path:
-    """Write `.cursor/context/service-context.json` and update `.vscode/launch.json` attach config."""
+    """Write `.cursor/context/service-context.json` and update `.vscode/launch.json` attach configs."""
     root = (cwd or Path.cwd()).resolve()
     doc = build_service_context(root)
     spr = doc.get("service_path_resolution") or {}
-    if spr.get("source") == "unresolved":
+    services = doc.get("services")
+    if not isinstance(services, dict):
+        services = {}
+
+    if spr.get("source") == "unresolved" and not services:
         notes = spr.get("provenance_notes")
         if isinstance(notes, list) and notes:
             msg = " ".join(str(x) for x in notes)
         else:
             msg = "Could not resolve service path (e.g. CURSOR_SERVICE_REPO is a URL with no local clone)"
         raise ServiceContextUnresolvedError(msg)
-    launch_meta = merge_vscode_launch_attach(root, doc)
-    if launch_meta:
-        doc["vscode_launch"] = launch_meta
-    elif doc.get("service_root"):
-        doc.setdefault("notes", []).append(
-            "No VS Code attach template for this stack; add an attach configuration to .vscode/launch.json manually."
-        )
+
+    if services:
+        merge_vscode_launch_for_all_services(root, services)
+        _denormalize_primary_fields(doc)
 
     out = service_context_path(root)
     out.parent.mkdir(parents=True, exist_ok=True)

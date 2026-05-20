@@ -1,59 +1,122 @@
 ---
-Starts the local application using `.cursor/context/service-context.json` (`primary_commands.run`, ports, debug attach hints). Use after **task-context-builder** or **align-branch** when the user wants the service process running locally—not for Jira pick, save-task-context, or branch alignment alone.
+Starts local application(s) using `.cursor/context/service-context.json` and workspace catalog (`workspace-services.json`, `hootsuite-dev-env.code-workspace`). Runs **one or more** runnable services **in parallel** when needed; avoids conflicting duplicates; picks alternate ports when defaults are taken. Use after **task-context-builder** or **align-branch** when the user wants service process(es) running locally—not for Jira pick, save-task-context, or branch alignment alone.
 name: start-service
 model: composer-2-fast
 ---
 
-# Start local service
+# Start local service(s)
 
 ## Purpose and boundaries
 
-**In scope:** Load **`.cursor/context/service-context.json`**, take **`primary_commands.run`** (or the best equivalent entrypoint for this stack), optionally surface **`endpoints`** / **`vscode_launch`**, then either **print** that command for the user to run **themselves** (no shell) or **start** the dev server in a **background** shell from the correct working directory—match what they chose (self-run vs agent-run).
+**In scope:** Discover which **runnable** repos to start, resolve **`primary_commands.run`** per repo (from **`service-context.json`** and/or **`resolve-service.py`**), check **ports** and **conflicts**, then either **print** commands (user runs them) or **start** each dev server in a **background** shell from **`hootsuite-dev-env`** root. When **more than one** service is required, launch **all** in the **same assistant turn** (parallel shell tool calls)—do not start them one-by-one in sequence unless a dependency truly requires it (rare).
 
 **Out of scope:** **`pick-task.py`**, **`save-task-context.py`**, **`checkout-jira-branch.py`**, full markdown context packs (**task-context-builder**), production or minikube deploys unless the user explicitly asks.
 
-**Success:** The run command is executed (background) or clearly printed; the user knows which **URL/port** to hit and how to **attach a debugger** when the stack is JVM/Node/etc.
+**Success:** Every intended service is running (background) or its command is printed; the user gets **service id → URL/port** (including any **port overrides**) and **debug-attach** hints per stack.
 
-**Prerequisite:** **`service-context.json`** exists and is fresh enough. If missing or stale, run **`python3 .cursor/tools/resolve-service.py`** from **`hootsuite-dev-env` repo root** (no Jira), or use **task-context-builder** / **align-branch** workflows and then **resolve-service**.
+**Prerequisite:** **`service-context.json`** should exist and be fresh enough. Run **`python3 .cursor/tools/resolve-service.py`** from **`hootsuite-dev-env`** repo root — it discovers **all runnable** workspace folders and fills the **`services`** map (one entry per catalog id, e.g. `dashboard`, `service-entitlement`). Re-run after workspace or branch changes.
 
 ---
 
 ## Workspace layout (same as **align-branch**)
 
-- **`hootsuite-dev-env`** holds **`.cursor/`** and the generated **`service-context.json`** (under **`.cursor/context/`**).
-- **`primary_commands.run`** is usually a shell line starting with **`cd ../service-entitlement && …`**.
-- When the multi-root **`hootsuite-dev-env.code-workspace`** is open, **`CURSOR_SERVICE_REPO`** may already point at **service-entitlement**; still prefer commands from **`service-context.json`** so cwd and flags stay consistent with what **`write_service_context`** recorded.
+- **`hootsuite-dev-env`** holds **`.cursor/`** and **`service-context.json`** with a **`services`** map (under **`.cursor/context/`**).
+- **`hootsuite-dev-env.code-workspace`** and **`.cursor/context/workspace-services.json`** list which sibling folders are in play; **`workspace_presets`** (e.g. **organization-dashboard**) imply multiple runnables.
+- **`primary_commands.run`** is usually a shell line starting with **`cd ../service-<name> && …`**.
+- When the multi-root workspace is open, **`CURSOR_SERVICE_REPO`** may point at one primary folder; still derive **per-service** commands so cwd and flags stay correct.
+
+---
+
+## Which services to start
+
+Build an ordered list **`services_to_start`** (unique **service ids**):
+
+1. **User request** — explicit service names (e.g. “start org and dashboard”).
+2. Else **workspace folders** — every folder in **`hootsuite-dev-env.code-workspace`** except **`hootsuite-dev-env`** itself.
+3. Else **single primary** — **`service-context.json`** → **`service_root`**, or **`current-task.local.json`** → **`service_repo_root`**.
+
+**Map folder → id** using **`.cursor/context/workspace-services.json`** (`folder` / `id`).
+
+**Runnable filter** — include only entries with **`kind`** **`service`** or **`frontend`**. **Exclude** **`library`** and **`idl`** (e.g. **service-organization-models**, **service-organization-idl**); they compile with the parent **service**, not as separate processes.
+
+**Conflict filter (do not start together):**
+
+| Rule | Action |
+|------|--------|
+| Same **`id`** already started in this session | **Skip** duplicate unless the user asked to **restart** (then stop/replace the old process only if they confirm—default: skip). |
+| Two runnables share the **same default HTTP port** and both would use that port | Keep the **first** on the default; **reassign** the next (see **Port allocation**). |
+| User named mutually exclusive services (rare) | Start only what they asked for; if unclear, **AskQuestion**. |
+
+**Not a conflict:** **dashboard** (frontend, default **1337**) + a JVM **service** (default **8080**) — run **in parallel**.
+
+---
+
+## Resolve run command per service
+
+For each id in **`services_to_start`**:
+
+1. Read **`service-context.json`** → **`services[<id>]`** (same shape as the legacy single-service fields: **`primary_commands`**, **`endpoints`**, **`vscode_launch`**).
+2. **Run command:** prefer **`primary_commands.run`**, else **`primary_commands.start`** (dashboard uses **`make start`**).
+3. If the id is missing from **`services`**, refresh: **`python3 .cursor/tools/resolve-service.py`**, or parse **`../<folder>/Makefile`** (`run` / `start` target).
+4. **Default HTTP port(s):** **`services[<id>].endpoints.ports`**, Makefile (**`service/run <port>`** for sbt), or frontend defaults (e.g. dashboard **1337**).
+
+---
+
+## Port allocation (before execute)
+
+Maintain a set **`reserved_ports`** of ports already listening on **localhost** and ports assigned earlier in this plan.
+
+**Detect listening (macOS/Linux):**
+
+```bash
+lsof -nP -iTCP:<port> -sTCP:LISTEN 2>/dev/null | head -1
+```
+
+If output is non-empty, the port is **in use**.
+
+**Pick a free port** starting from the service default (e.g. **8080** for sbt, **1337** for dashboard FE): try **`port`**, then **`port+1`**, … up to **`port+20`**. First port not in **`reserved_ports`** and not listening wins.
+
+**Apply override to the run command** when the chosen port ≠ default:
+
+- **sbt / Makefile** — replace **`service/run 8080`** (or the discovered default) with **`service/run <chosen>`** in the command string.
+- **JVM debug (JDWP)** — if **`endpoints.debug`** or launch uses **5005** and it is taken, use the next free port (e.g. **5006**) and add/adjust **`-jvm-debug <port>`** or **`SB_OPTS`** / **`SBT_OPTS`** in the same way the service Makefile documents.
+- **Node / other** — set the stack’s usual env flag (**`PORT`**, **`--port`**, etc.) per that repo’s README/Makefile; cite the override in chat.
+
+Add each assigned port to **`reserved_ports`** before planning the next service.
+
+If a port is in use by **the same service already running** (expected URL responds), **skip** starting that service unless the user wants a **restart** on a **new** port.
 
 ---
 
 ## Flow
 
-1. **Working directory:** **`hootsuite-dev-env`** repository root (directory that contains **`.cursor/`**), so relative **`cd ../service-entitlement`** in **`primary_commands.run`** resolves correctly.
-2. **Read** **`.cursor/context/service-context.json`**:  
-   - **`primary_commands.run`** — primary start command.  
-   - If **`run`** is missing, fall back to **`cd ../service-entitlement && make run`** when **`../service-entitlement`** exists; otherwise stop with a clear error.
-3. **Optional one-liner context for the user:** From the same file, cite **`endpoints.ports`**, **`endpoints.http_examples`**, and **`vscode_launch.debug_attach.hint`** when present (no wall of JSON).
-4. **How to proceed (ask if unclear):** If the user wants **only the command** (they run **`make run`** themselves), print **`primary_commands.run`** and the port/debug hints—**do not** spawn a background process. If they want the agent to start it, continue with step 5.
-5. **Execute (when not print-only):** Run the **`run`** command via the agent’s shell tool with **background** mode (long-running JVM/Node/etc.). Do not block the chat on foreground **`make run`** unless the user explicitly asks for foreground logs in this session.
-6. **Light verification (optional):** After a short pause, a single **`curl`** to **`localhost:<port>`** from **`endpoints`** is enough when HTTP is relevant; treat failure as "still starting" unless the process clearly exited.
-7. **Failure:** If the command exits quickly, show **stderr**; suggest **`make vault-setup-local-dev`**, missing **`.env`**, or **`compile-and-test-service`** only when **`service-context.json`** / logs support that hypothesis.
+1. **Working directory:** **`hootsuite-dev-env`** repository root.
+2. **Build `services_to_start`** (see above); apply runnable + conflict filters.
+3. **Plan** run command + ports for each (resolve context, allocate ports).
+4. **Optional one-liner per service:** id, final command (with port overrides), URL/port, debug-attach hint.
+5. **How to proceed (ask if unclear):** **Print-only** → emit all commands and ports; **no** background shells. **Agent-run** → step 6.
+6. **Execute (parallel):** One **background** shell per service (**same message**, multiple shell tool calls). Do not block the chat on foreground **`make run`** unless the user explicitly wants foreground logs.
+7. **Light verification (optional):** After a short pause, **`curl`** (or **`curl -k`** for HTTPS FE) per service to its **assigned** port; treat failure as “still starting” unless the process exited.
+8. **Failure:** If a command exits quickly, show **stderr** for that service only; suggest **`make vault-setup-local-dev`**, missing **`.env`**, or compile/test targets only when logs support it.
 
 ---
 
 ## Handoff from other agents
 
 - **task-context-builder** §1 step 8 — when the user chooses **Run service**, the parent flow may **invoke this agent** so start logic stays in one place.
-- **`pick-task.py` + `save-task-context`** — produce **`current-task.local.json`**; they do **not** start the service. **`python3 .cursor/tools/start-service.py`** (`maybe_prompt_run_service_interactive`) is a separate TTY tool: it asks whether to show the start flow, then whether the user will run the command **themselves** (wording of the printed one-liner). In **chat**, use this agent or **task-context-builder** §1 step 8. Run it from dev-env root when **`service-context.json`** exists (or after **`resolve-service`** / **align-branch** as needed).
+- **`pick-task.py` + `save-task-context`** — produce **`current-task.local.json`**; they do **not** start services. **`python3 .cursor/tools/start-service.py`** is a separate TTY helper for a **single** primary command. In **chat**, use this agent or **task-context-builder** §1 step 8.
 
 ---
 
 ## Safety
 
 - Do not kill unrelated processes; do not expose secrets from **`.env`** in chat.
-- If a service is **already listening** on the expected port, say so and **skip** a duplicate start unless the user wants a restart.
+- Do not start **library** / **idl** repos as servers.
+- Do not bind two JVM backends to the same HTTP port; **reassign** instead of failing silently.
+- If the user only needs one service, behave as before (single background shell).
 
 ---
 
 ## Chat output (agents)
 
-**Minimal:** one short block—running state or the printed command, then port/URL and debug-attach line if present. **Do not** restate this entire agent doc, list numbered workflow steps, paste **`service-context.json`**, or add a “What’s next” essay. Long-form task planning belongs in **build-task-context**, not here.
+**Minimal:** one short block per started service — **id**, **running** or printed command, **URL/port** (note overrides), debug-attach line if present. For multiple services, a compact bullet list is enough. **Do not** restate this entire agent doc, paste JSON, or add a “What’s next” essay.
