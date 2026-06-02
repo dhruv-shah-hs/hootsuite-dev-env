@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://hootsuite.invalid/schemas/epic-context-v1.json",
+  "title": "Resolved Jira epic context",
+  "description": "Written by save-epic-context. user_input holds required fields from the user.",
+  "type": "object",
+  "required": ["resolved_at", "epic", "user_input"],
+  "additionalProperties": true,
+  "properties": {
+    "$schema": { "type": "string" },
+    "resolved_at": { "type": "string", "format": "date-time" },
+    "generated_by": { "type": "string" },
+    "epic": {
+      "type": "object",
+      "required": ["id", "label"],
+      "additionalProperties": true
+    },
+    "user_input": {
+      "type": "object",
+      "required": ["description", "goal", "requirements", "linked_tickets"],
+      "properties": {
+        "description": { "type": "string", "minLength": 1 },
+        "goal": { "type": "string", "minLength": 1 },
+        "requirements": { "type": "string", "minLength": 1 },
+        "linked_tickets": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "children": {
+      "type": "array",
+      "description": "Child issues from Jira (pick-epic) or inferred from linked_tickets.",
+      "items": { "type": "object", "additionalProperties": true }
+    },
+    "plan": {
+      "type": ["object", "null"],
+      "properties": {
+        "markdown": { "type": "string" },
+        "updated_at": { "type": "string" }
+      }
+    },
+    "cloud_snapshot_path": { "type": ["string", "null"] }
+  }
+}

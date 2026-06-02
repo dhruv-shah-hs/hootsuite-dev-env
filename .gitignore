@@ -1,3 +1,5 @@
 .env
 .cursor/context/current-task.local.json
+.cursor/context/current-epic.local.json
+.cursor/context/slack-channel.local.json
 .cursor/context/service-context.json

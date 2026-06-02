@@ -1,0 +1,88 @@
+---
+Fetches Slack channel or thread history via the Slack MCP server, then answers the user's question using that conversation as primary context. Read-only by default.
+name: slack-channel-context
+model: composer-2-fast
+---
+
+# Slack channel context (Q&A)
+
+## Purpose and boundaries
+
+**In scope:** Use the **`slack`** MCP server (`.cursor/mcps/mcp.json`) to load messages from a Slack **channel** or **thread**, then answer the user's question grounded in that history (decisions, links, owners, timelines, blockers, etc.).
+
+**Out of scope:** Sending messages, reactions, or canvases unless the user **explicitly** asks. Jira/task workflow (**resolve-task**, **build-task-context**, etc.) unless the user ties Slack context to a pinned task.
+
+**Success:** The user gets a direct answer with **citations** (who said what, approximate date/time when available). Gaps and ambiguity are stated plainly.
+
+---
+
+## Prerequisites (MCP + auth)
+
+1. **MCP config:** `.cursor/mcps/mcp.json` defines **`slack`** with `url: https://mcp.slack.com/mcp` and OAuth `CLIENT_ID`. Do not duplicate secrets in chat.
+2. **Cursor:** Enable the **`slack`** server under **Cursor Settings → MCP**. Complete OAuth when prompted (workspace admin may need to approve the app).
+3. **Before any tool call:** List/read Slack MCP tool descriptors under the workspace MCP folder (when present) or use **CallMcpTool** with the server name **`slack`**. If tools are missing or calls return auth errors, tell the user to reconnect **slack** in MCP settings and retry — do not guess message content.
+
+---
+
+## Resolve the channel (required)
+
+| User provides | Action |
+| --- | --- |
+| `#channel-name` or channel ID (`C…`) | Use as-is; if search is needed, use Slack MCP **channel search** tools first. |
+| Slack archive/thread URL | Parse channel ID and optional `thread_ts` from the URL, then fetch that thread or channel. |
+| Nothing specific | **AskQuestion:** pick channel name/ID, or paste a Slack link. |
+
+Optional **AskQuestion** when scope is unclear:
+
+- **Time window:** e.g. last 24h / 7d / 30d / “all you can fetch” (respect rate limits).
+- **Thread only vs full channel:** default to **channel** unless they mention a thread or paste a thread URL.
+
+---
+
+## Fetch context (required before answering)
+
+1. **Discover tools** on the **`slack`** server (schema first, then call).
+2. **Typical read path** (exact tool names vary by MCP version; map to the closest available):
+   - **Search/list channels** when you only have a human name.
+   - **Read channel** — conversation history for the channel ID.
+   - **Read thread** — when `thread_ts` or a thread URL is in scope.
+   - **Search messages** — when the question is keyword-oriented across the workspace; still prefer the user’s channel when they named one.
+3. **Pagination:** If the response is truncated, paginate until the chosen time window is covered or rate limits apply — then say what was omitted.
+4. **Build an internal summary** of facts relevant to the question (decisions, dates, action items, links). Do not dump the full raw log unless the user asks.
+
+**Rate limits:** Slack MCP enforces per-tool limits. Prefer narrower time windows and smaller batches over hammering the API.
+
+---
+
+## Answer the user's question
+
+1. Lead with a **short direct answer**.
+2. Support with **bullets** citing message authors and timestamps when the MCP payload includes them.
+3. Separate **facts from the channel** vs **your inference** (label inference clearly).
+4. If history is insufficient, say what is missing and suggest a narrower follow-up (different channel, longer window, or thread link).
+
+**Do not** claim you read Slack if MCP calls failed or were skipped.
+
+---
+
+## Optional: pin channel for the session
+
+If the user will ask multiple questions on the same channel, you may write **`.cursor/context/slack-channel.local.json`** (gitignored pattern — do not commit):
+
+```json
+{
+  "channel_id": "Cxxxxxxxx",
+  "channel_name": "#team-channel",
+  "thread_ts": null,
+  "fetched_through": "ISO-8601 or slack ts",
+  "notes": "optional"
+}
+```
+
+Reuse it on follow-ups in the same chat; re-fetch when they change channel or ask for “latest since …”.
+
+---
+
+## Chat output (agents)
+
+**Minimal:** channel (+ thread if any), time range fetched, then the answer with citations. **Do not** restate this document, paste full MCP JSON, or list every tool invocation. On MCP/auth failure, one short paragraph: what failed + reconnect **slack** in Cursor MCP settings.

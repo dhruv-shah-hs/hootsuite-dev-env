@@ -57,10 +57,32 @@
       "kind": "service"
     },
     {
+      "id": "scim-service",
+      "folder": "scim-service",
+      "path": "../scim-service",
+      "kind": "service"
+    },
+    {
       "id": "dashboard",
       "folder": "dashboard",
       "path": "../dashboard",
       "kind": "frontend"
+    },
+    {
+      "id": "hs-app-organization-management",
+      "folder": "hs-app-organization-management",
+      "path": "../hs-app-organization-management",
+      "kind": "frontend",
+      "companions": [
+        "organization-management"
+      ]
+    },
+    {
+      "id": "organization-management",
+      "folder": "organization-management",
+      "path": "../organization-management",
+      "kind": "service",
+      "parent_service": "hs-app-organization-management"
     }
   ],
   "workspace_presets": [
@@ -134,6 +156,19 @@
       ]
     },
     {
+      "id": "scim",
+      "label": "SCIM",
+      "description": "scim-service only",
+      "primary": "scim-service",
+      "folders": [
+        "scim-service"
+      ],
+      "aliases": [
+        "scim",
+        "scim-service"
+      ]
+    },
+    {
       "id": "organization-dashboard",
       "label": "Organization + dashboard",
       "description": "organization stack plus dashboard frontend",
@@ -147,6 +182,22 @@
       "aliases": [
         "organization-dashboard",
         "org-dashboard"
+      ]
+    },
+    {
+      "id": "organization-management-fe",
+      "label": "Organization management FE",
+      "description": "hs-app-organization-management + organization-management BFF",
+      "primary": "hs-app-organization-management",
+      "folders": [
+        "hs-app-organization-management",
+        "organization-management"
+      ],
+      "aliases": [
+        "organization-management-fe",
+        "organization-management fe",
+        "org-management-fe",
+        "hs-app-organization-management"
       ]
     }
   ]

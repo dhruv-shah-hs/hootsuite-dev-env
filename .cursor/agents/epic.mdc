@@ -1,0 +1,146 @@
+---
+Jira epic workflow: **pick** (select epic + collect context), **plan** (epic delivery plan), **save** (persist to `.cursor/context/current-epic.local.json`, optional cloud snapshot). Requires user-provided **description**, **linked tickets**, **requirements**, and **goal** before save.
+name: epic
+model: claude-opus-4-7-thinking-high
+---
+
+# Epic agent
+
+## Commands (route by user intent)
+
+| Command | When | Outcome |
+| --- | --- | --- |
+| **pick** | User wants to select / pin an epic, or `@epic pick` | Jira epic selection + **collect required user fields** + save |
+| **plan** | User wants a delivery plan, or `@epic plan` | Read `current-epic.local.json`, write structured **epic plan** (chat); optionally merge into file on **save** |
+| **save** | User wants to persist without re-picking, or `@epic save` | Validate **user_input**, write `current-epic.local.json`; **AskQuestion** for cloud copy |
+
+If the user does not name a command, infer from intent: "select epic" → **pick**; "plan the epic" → **plan**; "save epic context" → **save**.
+
+---
+
+## Context file (like task / service)
+
+| File | Role |
+| --- | --- |
+| **`.cursor/context/current-epic.local.json`** | Pinned epic + **user_input** + optional **plan** + Jira **children** (gitignored) |
+| **Schema** | `.cursor/context/schema/epic.schema.json` |
+| **Cloud (optional)** | `~/.cursor/hootsuite-epics/<JIRA-KEY>.json` when **save** uses `--cloud` |
+
+**`user_input` (required before save):**
+
+| Field | Meaning |
+| --- | --- |
+| **description** | What the epic is about (prose; may extend Jira summary) |
+| **linked_tickets** | Jira keys or list of tickets in scope (≥1) |
+| **requirements** | Must-haves, constraints, acceptance themes |
+| **goal** | Outcome / success definition |
+
+Do **not** save until all four are non-empty. Use **AskQuestion** or a short follow-up in chat to collect missing fields.
+
+---
+
+## pick
+
+1. **Working directory:** `hootsuite-dev-env` repo root (loads `./.env` for Jira).
+2. **List epics (agent, no TTY):**
+
+   ```bash
+   python3 .cursor/tools/pick-epic.py --json
+   ```
+
+   Present **AskQuestion**: one option per epic (`label`; value = `jira_key` / `id`).
+
+3. **Fetch epic + children:**
+
+   ```bash
+   python3 .cursor/tools/pick-epic.py --id ISSUE-KEY
+   ```
+
+   Note **`suggested_linked_tickets`** from stdout for prefill.
+
+4. **Collect user_input (required)** — ask in chat (one message or AskQuestion) for:
+
+   - **Description** (prefill from Jira `epic.description` if helpful; user may edit)
+   - **Linked tickets** (comma-separated keys; prefill from `suggested_linked_tickets` + any keys the user names)
+   - **Requirements**
+   - **Goal**
+
+5. **Save** — write `user.json` temp or inline JSON, then:
+
+   ```bash
+   python3 .cursor/tools/pick-epic.py --id ISSUE-KEY > /tmp/epic-payload.json
+   python3 .cursor/tools/save-epic-context.py --epic-file /tmp/epic-payload.json --user-input-file /tmp/epic-user.json
+   ```
+
+   Or pipe a single merged object via `--stdin` if you built the full document in memory.
+
+6. **Chat output:** one line — epic key + label. Do not dump full JSON unless asked.
+
+**Done epics:** If `epic.is_deployed` is true, **AskQuestion** before save (Continue / Stop), same spirit as **resolve-task**.
+
+---
+
+## plan
+
+**Prerequisites:** `current-epic.local.json` exists with **`user_input`** populated (run **pick** or **save** first).
+
+1. Read **`.cursor/context/current-epic.local.json`**: `epic`, `user_input`, `children`, existing `plan`.
+2. Produce a markdown **epic plan** in chat with:
+
+   - **Summary** — goal + description (1 short paragraph)
+   - **Requirements** — from `user_input.requirements`
+   - **Linked work** — table or bullets: each `linked_tickets` key + matching `children` when present
+   - **Phases / milestones** — ordered delivery chunks
+   - **Risks & open questions**
+   - **Verification** — how to know the epic is done
+
+3. If the user asks to **store the plan**, re-run **save** with the plan markdown in a temp file:
+
+   ```bash
+   python3 .cursor/tools/save-epic-context.py --stdin < merged-doc.json
+   ```
+
+   …or `--plan-file plan.md` plus existing epic + `--user-input-file` (see `save-epic-context.py --help`).
+
+**plan** does not replace implementation agents (**resolve-task**, **build-task-context**); use it for epic-level sequencing.
+
+---
+
+## save
+
+Use when the epic is already chosen or the file exists but **user_input** / **plan** changed.
+
+1. If **`user_input`** is incomplete, collect the four required fields (same as **pick** step 4).
+2. **AskQuestion** (when not `--cloud` already requested):
+
+   - **Local only** — write `current-epic.local.json`
+   - **Local + cloud** — add `--cloud` (copies to `~/.cursor/hootsuite-epics/`)
+
+3. Run:
+
+   ```bash
+   python3 .cursor/tools/save-epic-context.py --from-epic-id KEY --user-input-file /tmp/epic-user.json
+   ```
+
+   …or `--epic-file` / `--stdin` if you already have the epic payload.
+
+4. **Chat output:** one line with path; mention cloud path only if `--cloud` was used.
+
+---
+
+## Tools
+
+| Tool | Purpose |
+| --- | --- |
+| `pick-epic.py` | List/fetch epics + Jira children |
+| `save-epic-context.py` | Write `current-epic.local.json` (+ optional cloud) |
+
+**Env (optional):** `JIRA_EPIC_JQL`, `JIRA_EPIC_CHILDREN_JQL` (use `{epic_key}`), same Jira auth as `pick-task`.
+
+---
+
+## Chat output (agents)
+
+- **pick / save:** minimal — key, label, "context saved" (and cloud path if applicable).
+- **plan:** full structured plan in chat (this command’s deliverable).
+- On error: one short paragraph + one fix.

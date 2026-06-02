@@ -14,6 +14,7 @@ Steps
 
    This script sources the nearest `.env` (walking up from your current directory), then runs `hootctl login docker` and `vaultlogin dev`, each of which will prompt for credentials. To only load `.env` without the logins: `CURSOR_DEV_ENV_SKIP_LOGINS=1 source ./.cursor/cursor-dev-env.sh`
 4. Open `hootsuite-dev-env.code-workspace` in Cursor and use agents with `@agent-name` and your prompt.
+5. **Slack MCP (optional):** In Cursor **Settings → MCP**, enable servers from `.cursor/mcps/mcp.json` (or point your MCP config at that file). For **`slack`**, complete OAuth when prompted — workspace admins may need to approve the Slack app tied to the `CLIENT_ID` in `mcp.json`.
 
 Following agents available currently
 
@@ -34,5 +35,13 @@ Read service-context.json, run primary_commands.run (or tell the user the comman
 
 **build-task-context**
 Read current-task.local.json, explore the service repo, and write a status-driven plan (development vs PR review vs QA vs closure) based on task.status. Plan-only deliverable.
+
+
+**epic**
+Jira epic workflow with commands **pick**, **plan**, **save**. Persists to `.cursor/context/current-epic.local.json` (like task/service context). **pick** / **save** require user-provided **description**, **linked tickets**, **requirements**, and **goal**. Optional cloud snapshot under `~/.cursor/hootsuite-epics/`. Slash: `/epic-pick`, `/epic-plan`, `/epic-save`, or `@epic pick`.
+
+**slack-channel-context**
+Load recent messages from a Slack channel or thread via the **slack** MCP server, then answer your question from that conversation (decisions, owners, links, blockers). Example: `@slack-channel-context In #my-team-channel, what did we decide about the rollout date?`
+
 Typical order: configure-workspace → (reload window) → resolve-task → align-branch → resolve-service → start-service → build-task-context. 
 
